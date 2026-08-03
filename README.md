@@ -61,6 +61,21 @@ prefix first), so `kb_app`'s own routes never need to know about it. `ui/src/cli
 relative fetch paths for the same reason — they resolve correctly whether the page is loaded at
 `/` (standalone) or `/api/apps/kb/` (proxied).
 
+### Data persistence
+
+The indexed documents and Postgres data directory are mounted via `$AW_APP_DATA`
+(`aw-app.json`'s `runtime.volumes`, gated by the `fs:workspace-data` permission) at
+`/app/persist` — resolved by aw-workspace to `~/.aw-workspace/data/kb/` on the host, **outside**
+this app's installed package directory. That distinction matters: `aw-workspace` deletes the
+entire package directory on uninstall (`fetch.remove_app_repo`), so a package-relative volume
+(e.g. `{"source": "data", ...}`) looks persistent but is wiped on every uninstall/reinstall —
+found live shipping this app's first version. `$AW_APP_DATA` survives that; `PGDATA` and
+`KB_DATA_DIR` both point inside it (see `entrypoint.sh` / `aw-app.json`'s `runtime.env`).
+
+The one exception is the `.` (package-root) volume mounted at `/app/pkg`, used only so
+`self_register.py` can write this app's own `mcp.json` — that one is *supposed* to reset on
+every install, since it's regenerated fresh on every boot anyway.
+
 ## Local development
 
 ```sh

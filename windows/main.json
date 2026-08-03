@@ -1,0 +1,14 @@
+{
+  "layout": "stack",
+  "regions": [
+    {
+      "id": "main",
+      "widgets": [
+        {
+          "type": "iframe",
+          "src": "/api/apps/kb/"
+        }
+      ]
+    }
+  ]
+}

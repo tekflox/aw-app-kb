@@ -1,0 +1,23 @@
+name: Release
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+    inputs:
+      bump:
+        description: "Force bump kind"
+        type: choice
+        options: [major]
+
+jobs:
+  release:
+    # Same reusable release workflow every other TekFlox aw-app-* repo uses
+    # (aw-mcp-gateway, aw-app-template, ...) — bumps aw-app.json's version,
+    # tags, and syncs the marketplace catalog entry.
+    permissions:
+      contents: write
+    uses: tekflox/aw-marketplace/.github/workflows/app-release.yml@master
+    with:
+      bump: ${{ inputs.bump || '' }}
+    secrets: inherit

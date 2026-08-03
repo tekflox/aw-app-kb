@@ -1,0 +1,37 @@
+@import "tailwindcss";
+@plugin "@tailwindcss/typography";
+
+/* Dark theme tokens, ported verbatim from agentic-workspace's
+   src/app/src/index.css so KnowledgeBasePanel.jsx's className values
+   (bg-[var(--color-bg-primary)] etc.) render identically. This app is
+   served inside an iframe (its own document), so it can't inherit the
+   host SPA's live theme choice — shipping the dark palette as the fixed
+   default is the pragmatic v0.1 answer; wiring the two together is a
+   follow-up, not a blocker for getting the KB app plugged in. */
+:root {
+  --color-bg-primary: #0a0a0f;
+  --color-bg-secondary: #111118;
+  --color-bg-terminal: #000000;
+  --color-bg-header: #16161e;
+  --color-border: #2a2a3d;
+  --color-border-active: #3b3b5c;
+  --color-accent: #6366f1;
+  --color-accent-hover: #818cf8;
+  --color-text-primary: #e2e8f0;
+  --color-text-secondary: #94a3b8;
+  --color-text-muted: #64748b;
+  --color-danger: #ef4444;
+  --color-danger-hover: #f87171;
+  color-scheme: dark;
+}
+
+html, body, #root {
+  height: 100%;
+  margin: 0;
+}
+
+body {
+  background: var(--color-bg-primary);
+  color: var(--color-text-primary);
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif;
+}

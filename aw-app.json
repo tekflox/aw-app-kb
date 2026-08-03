@@ -1,0 +1,86 @@
+{
+  "manifest_version": 1,
+  "id": "kb",
+  "name": "Knowledge Base",
+  "version": "0.1.0",
+  "description": "Semantic search over project docs and skills, backed by Postgres/pgvector. Ported from the agentic-workspace monolith's Knowledge Base — file browser/editor, semantic + text search, code-map build jobs, and an MCP surface (search/update/delete_knowledge_base, search/load_skill) that aw-mcp-gateway picks up automatically.",
+  "icon": "book-open",
+  "tier": "container",
+  "publisher": "TekFlox",
+  "resource_estimate": {
+    "cpu": "medium",
+    "memory": "~1.5 GB",
+    "disk": "~2 GB"
+  },
+  "runtime": {
+    "image": "ghcr.io/tekflox/aw-app-kb:latest",
+    "port": 8000,
+    "resources": {
+      "cpus": 1,
+      "mem_mb": 2048
+    },
+    "volumes": [
+      {
+        "source": "data",
+        "target": "/app/data",
+        "mode": "rw"
+      },
+      {
+        "source": "pgdata",
+        "target": "/var/lib/postgresql/data",
+        "mode": "rw"
+      },
+      {
+        "source": ".",
+        "target": "/app/pkg",
+        "mode": "rw"
+      }
+    ]
+  },
+  "permissions": [
+    "containers:manage"
+  ],
+  "contributes": {
+    "windows": [
+      {
+        "id": "kb.main",
+        "title": "Knowledge Base",
+        "icon": "book-open",
+        "body": {
+          "type": "declarative",
+          "spec": "windows/main.json"
+        }
+      }
+    ],
+    "mcp": {
+      "reload_on_save": true,
+      "provides": [
+        "search_knowledge_base",
+        "update_knowledge_base",
+        "delete_knowledge_base",
+        "search_skills",
+        "load_skill"
+      ]
+    },
+    "skills": [
+      {
+        "id": "aw-kb-curator",
+        "path": "skills/aw-kb-curator"
+      }
+    ]
+  },
+  "config_schema": {
+    "type": "object",
+    "properties": {
+      "auto_start": {
+        "type": "boolean",
+        "default": true,
+        "title": "Auto-start",
+        "description": "Start the Knowledge Base container when the workspace starts."
+      }
+    },
+    "required": []
+  },
+  "dependencies": {},
+  "migrations": {}
+}

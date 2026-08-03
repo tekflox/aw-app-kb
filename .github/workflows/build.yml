@@ -1,0 +1,39 @@
+name: Build
+
+on:
+  workflow_dispatch: {}
+
+jobs:
+  backend:
+    runs-on: [self-hosted, aw-baremetal]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Install deps
+        run: pip install -r kb_app/requirements-dev.txt
+      - name: Validate manifest
+        run: python3 tests/validate_manifest.py
+      - name: Test suite
+        run: PYTHONPATH=. pytest tests/ -q
+
+  frontend:
+    runs-on: [self-hosted, aw-baremetal]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+      - working-directory: ui
+        run: npm install
+      - working-directory: ui
+        run: npm run build
+
+  image:
+    needs: [backend, frontend]
+    runs-on: [self-hosted, aw-baremetal]
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build image
+        run: docker build -t aw-app-kb:ci .

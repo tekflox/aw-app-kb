@@ -16,7 +16,7 @@ RUN npm run build
 FROM pgvector/pgvector:pg17
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
-    python3 python3-pip ca-certificates curl \
+    python3 python3-pip ca-certificates curl git \
     && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /app

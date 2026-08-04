@@ -1115,12 +1115,24 @@ def _add_repo(git_url: str, name: str | None = None) -> str:
     os.makedirs(REPOS_DIR, exist_ok=True)
     repo_dir = os.path.join(REPOS_DIR, name)
 
+    # Private repos (e.g. the agentic-workspace monolith) need a token —
+    # stored in this app's own settings.json (PUT /api/kb/settings), same
+    # unencrypted-on-the-private-data-volume model settings.py already uses
+    # for map_paths. Only injected for github.com https URLs.
+    from .settings import get_settings
+    token = get_settings().get("github_token")
+    clone_url = git_url
+    if token and clone_url.startswith("https://github.com/"):
+        clone_url = clone_url.replace(
+            "https://github.com/", f"https://x-access-token:{token}@github.com/"
+        )
+
     if os.path.isdir(os.path.join(repo_dir, ".git")):
         print(f"Updating {name} ({repo_dir})...")
         subprocess.run(["git", "-C", repo_dir, "pull", "--ff-only"], check=True)
     else:
         print(f"Cloning {git_url} -> {repo_dir}...")
-        subprocess.run(["git", "clone", "--depth", "1", git_url, repo_dir], check=True)
+        subprocess.run(["git", "clone", "--depth", "1", clone_url, repo_dir], check=True)
 
     return name
 

@@ -13,7 +13,7 @@ Usage:
     python -m kb_app.kb_ops --update <path>     # create/update a KB file (content from stdin)
     python -m kb_app.kb_ops --map-path <path>   # extract code map (classes/functions/docstrings) to MD
                                                 # also converts .html/.htm to MD via markdownify
-                                                # writes to data/knowledge_base/mapped_folders/<name>/
+                                                # writes to <KB_DIR>/mapped_folders/<name>/
     python -m kb_app.kb_ops --map-path . --build   # map this workspace then index it
 
 Storage backend: PostgreSQL + pgvector, bundled into this app's own container.
@@ -35,8 +35,17 @@ from . import kb_pg as _kb
 # Persistent volume (see aw-app.json's "data" volume -> /app/data) — survives
 # container recreation, unlike the rest of the image.
 DATA_DIR = os.environ.get("KB_DATA_DIR", "/app/data")
-KB_DIR = os.path.join(DATA_DIR, "knowledge_base")
+# KB_DIR (the mapped/indexed markdown tree) is normally DATA_DIR/knowledge_base,
+# but can be pinned to its own mount (see aw-app.json's $AW_KB_DIR volume,
+# which makes this survive under the workspace's own .aw-workspace/knowledge_base
+# instead of being nested inside this app's private data dir).
+KB_DIR = os.environ.get("KB_DIR_OVERRIDE") or os.path.join(DATA_DIR, "knowledge_base")
 REPOS_DIR = os.path.join(DATA_DIR, "repos")
+# The "self" directory for --map-path self-mapping detection (skip our own
+# output/data dirs rather than looping into them) — DATA_DIR is the modern
+# analog of the monolith's repo root, since KB_DIR and REPOS_DIR both live
+# under it.
+BASE_DIR = DATA_DIR
 
 
 def _sha256(content):
@@ -83,7 +92,7 @@ def _write_kb_file(path, meta, content):
 
 
 def _build(force=False):
-    """Import changed docs from docs/knowledge_base/ into the pgvector index."""
+    """Import changed docs from KB_DIR into the pgvector index."""
     print("Building pgvector index (aw-pgvector @ 127.0.0.1:5433)...")
 
     # Bootstrap schema (idempotent, retries until aw-pgvector is ready).
@@ -931,11 +940,10 @@ def _resolve_map_target(target):
     extra_skips = set()
     if os.path.abspath(repo_dir) == os.path.abspath(BASE_DIR):
         # Self-mapping: skip dirs that would loop or produce massive noise.
-        # - docs/  : KB output dir — mapping it would index our own output
-        # - repos/ : manually placed external repos tracked separately
-        # - data/  : runtime blobs, DB files, uploads — no useful code
+        # - knowledge_base/ : KB output — mapping it would index our own output
+        # - repos/          : cloned/manually placed repos tracked separately
         # .venv/ and venv/ are already in SKIP_DIRS (applied to all walks).
-        extra_skips = {"docs", "repos", "data"}
+        extra_skips = {"knowledge_base", "repos"}
 
     return repo_dir, repo_name, extra_skips
 
@@ -1079,10 +1087,42 @@ def _build_parser():
     parser.add_argument("--search", metavar="QUERY", help="Search the knowledge base")
     parser.add_argument("--update", metavar="PATH", help="Create/update a KB file (content from stdin)")
     parser.add_argument("--delete", metavar="PATH", help="Delete a KB file and remove from pgvector")
-    parser.add_argument("--map-path", metavar="PATH", help="Extract code map from a directory and convert .html/.htm to Markdown. Accepts '.' or any absolute/relative path. Output goes to docs/knowledge_base/mapped_folders/<name>/.")
+    parser.add_argument("--map-path", metavar="PATH", help="Extract code map from a directory and convert .html/.htm to Markdown. Accepts '.' or any absolute/relative path. Output goes to <KB_DIR>/mapped_folders/<name>/.")
     parser.add_argument("--map-all", action="store_true", help="Map every path listed in knowledge_base.map_paths in aw.json.")
+    parser.add_argument("--add-repo", metavar="GIT_URL", help="Clone (or pull) a git repo into REPOS_DIR so --map-path <name> can reach it — this container has no bind mount into other repos' checkouts.")
+    parser.add_argument("--name", metavar="NAME", help="--add-repo: local name to clone under (default: repo basename)")
     parser.add_argument("--top-k", type=int, default=5, help="Number of search results (default: 5)")
     return parser
+
+
+def _add_repo(git_url: str, name: str | None = None) -> str:
+    """Clone (or pull, if already present) a git repo into REPOS_DIR/<name>.
+
+    This is how kb gets visibility into source it doesn't otherwise have a
+    filesystem path to — it runs in its own isolated Tier-2 container, with
+    no bind mount into e.g. the agentic-workspace monolith's checkout, so
+    ``--map-path <name>`` (a bare name, per ``_resolve_map_target``) needs
+    something under REPOS_DIR to point at. name defaults to the repo's own
+    basename (``foo/bar.git`` -> ``bar``).
+    """
+    import subprocess
+
+    if not name:
+        name = os.path.basename(git_url.rstrip("/"))
+        if name.endswith(".git"):
+            name = name[:-4]
+
+    os.makedirs(REPOS_DIR, exist_ok=True)
+    repo_dir = os.path.join(REPOS_DIR, name)
+
+    if os.path.isdir(os.path.join(repo_dir, ".git")):
+        print(f"Updating {name} ({repo_dir})...")
+        subprocess.run(["git", "-C", repo_dir, "pull", "--ff-only"], check=True)
+    else:
+        print(f"Cloning {git_url} -> {repo_dir}...")
+        subprocess.run(["git", "clone", "--depth", "1", git_url, repo_dir], check=True)
+
+    return name
 
 
 def _map_all(force: bool = False) -> None:
@@ -1102,8 +1142,12 @@ def run(args=None):
     parsed = parser.parse_args(args)
 
     if not any([parsed.build, parsed.search, parsed.update, parsed.delete,
-                parsed.map_path, parsed.map_all]):
+                parsed.map_path, parsed.map_all, parsed.add_repo]):
         parser.print_help()
+        return
+
+    if parsed.add_repo:
+        _add_repo(parsed.add_repo, name=parsed.name)
         return
 
     if parsed.map_all:

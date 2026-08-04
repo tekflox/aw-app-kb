@@ -21,12 +21,18 @@
     },
     "env": {
       "KB_DATA_DIR": "/app/persist/data",
+      "KB_DIR_OVERRIDE": "/app/kb_output",
       "PGDATA": "/app/persist/pgdata"
     },
     "volumes": [
       {
         "source": "$AW_APP_DATA",
         "target": "/app/persist",
+        "mode": "rw"
+      },
+      {
+        "source": "$AW_KB_DIR",
+        "target": "/app/kb_output",
         "mode": "rw"
       },
       {

@@ -1128,3 +1128,7 @@ def run(args=None):
 
     if parsed.search:
         _search(parsed.search, parsed.top_k)
+
+
+if __name__ == "__main__":
+    run()

@@ -9,6 +9,7 @@ import tailwindcss from '@tailwindcss/vite'
 // see aw-app.json's windows/main.json iframe + src/client.js's relative
 // fetch paths), so a single ordinary app build is enough.
 export default defineConfig({
+  base: './',
   plugins: [react(), tailwindcss()],
   server: {
     host: '0.0.0.0',

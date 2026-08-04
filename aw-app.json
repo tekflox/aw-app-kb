@@ -41,6 +41,15 @@
     "fs:workspace-data"
   ],
   "contributes": {
+    "nav": [
+      {
+        "id": "kb.nav",
+        "label": "Knowledge Base",
+        "icon": "book-open",
+        "section": "workspace",
+        "opens": "kb.main"
+      }
+    ],
     "windows": [
       {
         "id": "kb.main",

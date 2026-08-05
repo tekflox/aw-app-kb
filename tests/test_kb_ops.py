@@ -25,6 +25,44 @@ def test_resolve_map_target_self_map_skips_kb_output_and_repos():
     assert extra_skips == {"knowledge_base", "repos"}
 
 
+def test_resolve_map_target_prefers_shared_repos_dir_over_private_clone(tmp_path, monkeypatch):
+    shared = tmp_path / "shared-repos"
+    private = tmp_path / "private-repos"
+    (shared / "agentic-workspace").mkdir(parents=True)
+    (private / "agentic-workspace").mkdir(parents=True)
+    monkeypatch.setattr(kb_ops, "SHARED_REPOS_DIR", str(shared))
+    monkeypatch.setattr(kb_ops, "REPOS_DIR", str(private))
+
+    repo_dir, repo_name, extra_skips = kb_ops._resolve_map_target("agentic-workspace")
+    assert repo_dir == str(shared / "agentic-workspace")
+    assert repo_name == "agentic-workspace"
+    assert extra_skips == set()
+
+
+def test_resolve_map_target_falls_back_to_private_clone_when_not_shared(tmp_path, monkeypatch):
+    shared = tmp_path / "shared-repos"  # exists but has no "agentic-workspace" entry
+    shared.mkdir()
+    private = tmp_path / "private-repos"
+    monkeypatch.setattr(kb_ops, "SHARED_REPOS_DIR", str(shared))
+    monkeypatch.setattr(kb_ops, "REPOS_DIR", str(private))
+
+    repo_dir, repo_name, extra_skips = kb_ops._resolve_map_target("agentic-workspace")
+    assert repo_dir == str(private / "agentic-workspace")
+
+
+def test_available_repo_names_merges_and_dedupes_shared_and_private(tmp_path, monkeypatch):
+    shared = tmp_path / "shared-repos"
+    private = tmp_path / "private-repos"
+    (shared / "agentic-workspace").mkdir(parents=True)
+    (shared / "aw-console").mkdir(parents=True)
+    (private / "agentic-workspace").mkdir(parents=True)  # also privately cloned — dedup
+    (private / "some-fork").mkdir(parents=True)
+    monkeypatch.setattr(kb_ops, "SHARED_REPOS_DIR", str(shared))
+    monkeypatch.setattr(kb_ops, "REPOS_DIR", str(private))
+
+    assert kb_ops._available_repo_names() == ["agentic-workspace", "aw-console", "some-fork"]
+
+
 def test_resolve_map_target_explicit_path_no_self_skip(tmp_path):
     repo_dir, repo_name, extra_skips = kb_ops._resolve_map_target(str(tmp_path))
     assert repo_dir == str(tmp_path)

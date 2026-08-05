@@ -364,17 +364,13 @@ class KnowledgeBaseRoutes:
         return _start_job(f"add-repo:{name or git_url}", code)
 
     async def list_repos(self):
-        """Repos already cloned/placed under REPOS_DIR — what a bare name in
-        Mapped Folders can actually resolve to (surfaced in the UI so
-        typing a container filesystem path by mistake, e.g.
-        /opt/aw-workspace/repos, is obviously wrong before you hit Map)."""
-        from .kb_ops import REPOS_DIR
-        if not os.path.isdir(REPOS_DIR):
-            return {"repos": []}
-        return {"repos": sorted(
-            d for d in os.listdir(REPOS_DIR)
-            if os.path.isdir(os.path.join(REPOS_DIR, d))
-        )}
+        """Every bare name a Mapped Folders entry can actually resolve to —
+        the shared, already-checked-out workspace repos/ dir (read-only
+        $AW_WORKSPACE_REPOS mount) plus kb's own private clones — surfaced
+        in the UI so typing a container filesystem path by mistake, e.g.
+        /opt/aw-workspace/repos, is obviously wrong before you hit Map."""
+        from .kb_ops import _available_repo_names
+        return {"repos": _available_repo_names()}
 
     async def get_status(self):
         """Return current job status."""

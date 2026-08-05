@@ -41,6 +41,14 @@ DATA_DIR = os.environ.get("KB_DATA_DIR", "/app/data")
 # instead of being nested inside this app's private data dir).
 KB_DIR = os.environ.get("KB_DIR_OVERRIDE") or os.path.join(DATA_DIR, "knowledge_base")
 REPOS_DIR = os.path.join(DATA_DIR, "repos")
+# Read-only view of the WORKSPACE's own repos/ dir (aw-app.json's
+# $AW_WORKSPACE_REPOS mount) — where a workspace terminal / the git app
+# actually clones repos for real dev work. Resolving a bare --map-path name
+# against this FIRST means "point at a folder, map it" (Frederico,
+# 2026-08-05) works for anything already checked out there, with no
+# redundant clone of kb's own — REPOS_DIR (git-cloned via --add-repo) is
+# only the fallback for a repo that isn't.
+SHARED_REPOS_DIR = os.environ.get("SHARED_REPOS_DIR", "/workspace-repos")
 # The "self" directory for --map-path self-mapping detection (skip our own
 # output/data dirs rather than looping into them) — DATA_DIR is the modern
 # analog of the monolith's repo root, since KB_DIR and REPOS_DIR both live
@@ -912,12 +920,27 @@ def _format_code_map_md(data, rel_path):
     return "\n".join(lines)
 
 
+def _available_repo_names():
+    """Every bare name --map-path/--map-all can currently resolve — the
+    shared, already-checked-out workspace repos/ dir first, then kb's own
+    private clones, deduped and sorted."""
+    names = set()
+    for d in (SHARED_REPOS_DIR, REPOS_DIR):
+        if os.path.isdir(d):
+            names.update(n for n in os.listdir(d) if os.path.isdir(os.path.join(d, n)))
+    return sorted(names)
+
+
 def _resolve_map_target(target):
     """Resolve a --map-path argument to (repo_dir, repo_name, extra_skips).
 
     Accepts:
       - "." or any path  -> that directory, name = basename of resolved path
-      - a bare name      -> repos/<name> (for manually placed directories)
+      - a bare name       -> checked in order:
+          1. SHARED_REPOS_DIR/<name> — already cloned in the workspace's own
+             repos/ dir (a terminal, or the git app) — read-only, no clone of
+             kb's own needed.
+          2. REPOS_DIR/<name> — kb's own private clone (--add-repo).
 
     When the resolved directory is BASE_DIR (the agentic-workspace root),
     extra_skips prevents the walker from looping into KB output or runtime data.
@@ -933,6 +956,9 @@ def _resolve_map_target(target):
     if looks_like_path:
         repo_dir = os.path.abspath(target)
         repo_name = os.path.basename(repo_dir) or "root"
+    elif os.path.isdir(os.path.join(SHARED_REPOS_DIR, target)):
+        repo_dir = os.path.join(SHARED_REPOS_DIR, target)
+        repo_name = target
     else:
         repo_dir = os.path.join(REPOS_DIR, target)
         repo_name = target
@@ -954,8 +980,9 @@ def _map_repo(target, force=False):
 
     if not os.path.isdir(repo_dir):
         print(f"ERROR: Repo not found at {repo_dir}")
-        if os.path.isdir(REPOS_DIR):
-            print(f"Available repos: {', '.join(sorted(os.listdir(REPOS_DIR)))}")
+        available = _available_repo_names()
+        if available:
+            print(f"Available repos: {', '.join(available)}")
         sys.exit(1)
 
     out_dir = os.path.join(KB_DIR, "mapped_folders", repo_name)

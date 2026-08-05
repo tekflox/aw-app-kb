@@ -87,13 +87,6 @@ export async function kbSaveSettings(settings) {
   });
 }
 
-export async function kbAddRepo(gitUrl, name) {
-  return json('api/kb/add-repo', {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ git_url: gitUrl, name: name || undefined }),
-  });
-}
 
 export async function kbListRepos() {
   return json('api/kb/repos');

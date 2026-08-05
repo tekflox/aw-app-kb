@@ -7,7 +7,7 @@ import { useState, useEffect, useCallback, useRef, useMemo } from 'react';
 import {
   kbListFiles, kbReadFile, kbSaveFile, kbDeleteFile, kbSearchFiles, kbMcpSearch,
   kbBuild, kbMapPath, kbMapAndBuild, kbGetStatus, kbGetDocCount, kbGetSettings, kbSaveSettings,
-  kbAddRepo, kbListRepos,
+  kbListRepos,
 } from './client';
 import { marked } from 'marked';
 
@@ -37,8 +37,6 @@ export default function App() {
   const [pathInput, setPathInput] = useState('');
   const [settingsSaving, setSettingsSaving] = useState(false);
   const [availableRepos, setAvailableRepos] = useState([]);
-  const [repoUrlInput, setRepoUrlInput] = useState('');
-  const [cloning, setCloning] = useState(false);
 
   const outputRef = useRef(null);
   const pollRef = useRef(null);
@@ -157,23 +155,6 @@ export default function App() {
   const handleRemovePath = useCallback((path) => {
     setMapPaths((prev) => prev.filter((p) => p !== path));
   }, []);
-
-  const handleCloneRepo = useCallback(async () => {
-    const url = repoUrlInput.trim();
-    if (!url || cloning) return;
-    setCloning(true);
-    try {
-      const res = await kbAddRepo(url);
-      if (res.error) {
-        showMessage(res.error);
-      } else {
-        setJobStatus((prev) => ({ ...prev, running: true, operation: 'add-repo', output: [], error: null }));
-        setRepoUrlInput('');
-      }
-    } finally {
-      setCloning(false);
-    }
-  }, [repoUrlInput, cloning]);
 
   const handleSaveSettings = useCallback(async () => {
     setSettingsSaving(true);
@@ -358,8 +339,6 @@ export default function App() {
             displayLines={displayLines}
             settingsSaving={settingsSaving}
             availableRepos={availableRepos}
-            repoUrlInput={repoUrlInput}
-            cloning={cloning}
             onAddPath={handleAddPath}
             onRemovePath={handleRemovePath}
             onMapOne={handleMapOne}
@@ -369,9 +348,6 @@ export default function App() {
             onForceChange={setForce}
             onSaveSettings={handleSaveSettings}
             onPathInputKeyDown={(e) => e.key === 'Enter' && handleAddPath()}
-            onRepoUrlInputChange={setRepoUrlInput}
-            onCloneRepo={handleCloneRepo}
-            onRepoUrlInputKeyDown={(e) => e.key === 'Enter' && handleCloneRepo()}
           />
         ) : selectedFile ? (
           <>
@@ -478,10 +454,9 @@ function Spinner({ size = '3' }) {
 // ---------------------------------------------------------------------------
 function ManagePanel({
   mapPaths, pathInput, force, jobStatus, docCount, outputRef, displayLines,
-  settingsSaving, availableRepos, repoUrlInput, cloning,
+  settingsSaving, availableRepos,
   onAddPath, onRemovePath, onMapOne, onMapAndBuild, onBuildOnly,
   onPathInputChange, onForceChange, onSaveSettings, onPathInputKeyDown,
-  onRepoUrlInputChange, onCloneRepo, onRepoUrlInputKeyDown,
 }) {
   return (
     <div className="flex-1 overflow-y-auto p-4 space-y-4">
@@ -494,42 +469,21 @@ function ManagePanel({
         )}
       </div>
 
-      {/* Clone repo — this app has no bind mount into any other repo's
-          checkout, so a bare name in Mapped Folders can ONLY resolve to
-          something cloned here first (see Available repos below). */}
-      <div className="border border-[var(--color-border)] rounded overflow-hidden">
-        <div className="px-3 py-2 bg-[var(--color-bg-header)]">
-          <span className="text-xs font-semibold text-[var(--color-text-primary)]">Clone a repo</span>
-        </div>
-        <div className="px-3 py-2 border-t border-[var(--color-border)] flex items-center gap-2">
-          <input
-            value={repoUrlInput}
-            onChange={(e) => onRepoUrlInputChange(e.target.value)}
-            onKeyDown={onRepoUrlInputKeyDown}
-            placeholder="https://github.com/org/repo.git"
-            className="flex-1 bg-[var(--color-bg-primary)] text-xs text-[var(--color-text-primary)] border border-[var(--color-border)] rounded px-2 py-1 outline-none focus:border-[var(--color-accent)]"
-          />
-          <button
-            onClick={onCloneRepo}
-            disabled={cloning || jobStatus.running}
-            className="px-2 py-1 text-xs rounded bg-[var(--color-bg-header)] border border-[var(--color-border)] text-[var(--color-text-primary)] hover:bg-white/10 transition-colors disabled:opacity-40"
-          >
-            Clone
-          </button>
-        </div>
-        {availableRepos.length > 0 && (
-          <p className="px-3 pb-2 text-[10px] text-[var(--color-text-muted)]">
-            Available: {availableRepos.join(', ')} — use one of these names below, not a container filesystem path.
-          </p>
-        )}
-      </div>
-
-      {/* Mapped Folders */}
+      {/* Mapped Folders — a bare name resolves against the workspace's own
+          repos/ dir (already checked out by a terminal or the git app,
+          read-only $AW_WORKSPACE_REPOS mount) first, falling back to this
+          app's own private clones. Point at a folder that's already there;
+          this app doesn't clone repos itself. */}
       <div className="border border-[var(--color-border)] rounded overflow-hidden">
         <div className="px-3 py-2 bg-[var(--color-bg-header)] flex items-center justify-between">
           <span className="text-xs font-semibold text-[var(--color-text-primary)]">Mapped Folders</span>
           <span className="text-[10px] text-[var(--color-text-muted)]">{mapPaths.length} paths</span>
         </div>
+        {availableRepos.length > 0 && (
+          <p className="px-3 pt-2 text-[10px] text-[var(--color-text-muted)]">
+            Available: {availableRepos.join(', ')} — use one of these names below, not a container filesystem path.
+          </p>
+        )}
         <div className="divide-y divide-[var(--color-border)]">
           {mapPaths.length === 0 && (
             <p className="px-3 py-2 text-xs text-[var(--color-text-muted)] italic">No paths configured.</p>

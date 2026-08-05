@@ -18,13 +18,19 @@ from datetime import datetime
 from fastapi import APIRouter, Body
 
 from . import settings as _settings
+from .kb_ops import KB_DIR
 
 log = logging.getLogger(__name__)
 
 # One level above kb_app/ — where this package's own subprocess re-imports
 # itself from (cwd for the background build/map jobs below).
 APP_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-KB_DIR = os.path.join(_settings.DATA_DIR, "knowledge_base")
+# KB_DIR imported from kb_ops (single source of truth — this used to be
+# recomputed here independently as DATA_DIR/knowledge_base, which went
+# stale the moment kb_ops.KB_DIR started honoring KB_DIR_OVERRIDE: the file
+# browser kept scanning the old, now-empty directory while --build/--map
+# correctly wrote to the new $AW_KB_DIR mount, so the Files panel showed
+# empty despite "N docs indexed" being accurate. Reported live 2026-08-05.)
 
 # ---------------------------------------------------------------------------
 # Background job state (module-level singleton)

@@ -7,6 +7,7 @@ import { useState, useEffect, useCallback, useRef, useMemo } from 'react';
 import {
   kbListFiles, kbReadFile, kbSaveFile, kbDeleteFile, kbSearchFiles, kbMcpSearch,
   kbBuild, kbMapPath, kbMapAndBuild, kbGetStatus, kbGetDocCount, kbGetSettings, kbSaveSettings,
+  kbAddRepo, kbListRepos,
 } from './client';
 import { marked } from 'marked';
 
@@ -35,6 +36,9 @@ export default function App() {
   const [docCount, setDocCount] = useState(null);
   const [pathInput, setPathInput] = useState('');
   const [settingsSaving, setSettingsSaving] = useState(false);
+  const [availableRepos, setAvailableRepos] = useState([]);
+  const [repoUrlInput, setRepoUrlInput] = useState('');
+  const [cloning, setCloning] = useState(false);
 
   const outputRef = useRef(null);
   const pollRef = useRef(null);
@@ -48,6 +52,7 @@ export default function App() {
     kbGetSettings().then((s) => setMapPaths(s.map_paths || []));
     kbGetDocCount().then((d) => setDocCount(d.count ?? 0));
     kbGetStatus().then(setJobStatus);
+    kbListRepos().then((r) => setAvailableRepos(r.repos || []));
   }, []);
 
   // Polling for job status
@@ -62,6 +67,10 @@ export default function App() {
           setDocCount(dc.count ?? 0);
           // Refresh file list too
           kbListFiles().then(setFiles);
+          // Cover add-repo jobs finishing (Mapped Folders bare names resolve
+          // against this list — stale list = the exact "path not found"
+          // confusion this was built to prevent).
+          kbListRepos().then((r) => setAvailableRepos(r.repos || []));
         }
       } catch {}
     };
@@ -148,6 +157,23 @@ export default function App() {
   const handleRemovePath = useCallback((path) => {
     setMapPaths((prev) => prev.filter((p) => p !== path));
   }, []);
+
+  const handleCloneRepo = useCallback(async () => {
+    const url = repoUrlInput.trim();
+    if (!url || cloning) return;
+    setCloning(true);
+    try {
+      const res = await kbAddRepo(url);
+      if (res.error) {
+        showMessage(res.error);
+      } else {
+        setJobStatus((prev) => ({ ...prev, running: true, operation: 'add-repo', output: [], error: null }));
+        setRepoUrlInput('');
+      }
+    } finally {
+      setCloning(false);
+    }
+  }, [repoUrlInput, cloning]);
 
   const handleSaveSettings = useCallback(async () => {
     setSettingsSaving(true);
@@ -331,6 +357,9 @@ export default function App() {
             outputRef={outputRef}
             displayLines={displayLines}
             settingsSaving={settingsSaving}
+            availableRepos={availableRepos}
+            repoUrlInput={repoUrlInput}
+            cloning={cloning}
             onAddPath={handleAddPath}
             onRemovePath={handleRemovePath}
             onMapOne={handleMapOne}
@@ -340,6 +369,9 @@ export default function App() {
             onForceChange={setForce}
             onSaveSettings={handleSaveSettings}
             onPathInputKeyDown={(e) => e.key === 'Enter' && handleAddPath()}
+            onRepoUrlInputChange={setRepoUrlInput}
+            onCloneRepo={handleCloneRepo}
+            onRepoUrlInputKeyDown={(e) => e.key === 'Enter' && handleCloneRepo()}
           />
         ) : selectedFile ? (
           <>
@@ -446,9 +478,10 @@ function Spinner({ size = '3' }) {
 // ---------------------------------------------------------------------------
 function ManagePanel({
   mapPaths, pathInput, force, jobStatus, docCount, outputRef, displayLines,
-  settingsSaving,
+  settingsSaving, availableRepos, repoUrlInput, cloning,
   onAddPath, onRemovePath, onMapOne, onMapAndBuild, onBuildOnly,
   onPathInputChange, onForceChange, onSaveSettings, onPathInputKeyDown,
+  onRepoUrlInputChange, onCloneRepo, onRepoUrlInputKeyDown,
 }) {
   return (
     <div className="flex-1 overflow-y-auto p-4 space-y-4">
@@ -458,6 +491,36 @@ function ManagePanel({
           <span className="text-xs text-[var(--color-text-muted)] bg-white/5 px-2 py-0.5 rounded">
             {docCount} docs indexed
           </span>
+        )}
+      </div>
+
+      {/* Clone repo — this app has no bind mount into any other repo's
+          checkout, so a bare name in Mapped Folders can ONLY resolve to
+          something cloned here first (see Available repos below). */}
+      <div className="border border-[var(--color-border)] rounded overflow-hidden">
+        <div className="px-3 py-2 bg-[var(--color-bg-header)]">
+          <span className="text-xs font-semibold text-[var(--color-text-primary)]">Clone a repo</span>
+        </div>
+        <div className="px-3 py-2 border-t border-[var(--color-border)] flex items-center gap-2">
+          <input
+            value={repoUrlInput}
+            onChange={(e) => onRepoUrlInputChange(e.target.value)}
+            onKeyDown={onRepoUrlInputKeyDown}
+            placeholder="https://github.com/org/repo.git"
+            className="flex-1 bg-[var(--color-bg-primary)] text-xs text-[var(--color-text-primary)] border border-[var(--color-border)] rounded px-2 py-1 outline-none focus:border-[var(--color-accent)]"
+          />
+          <button
+            onClick={onCloneRepo}
+            disabled={cloning || jobStatus.running}
+            className="px-2 py-1 text-xs rounded bg-[var(--color-bg-header)] border border-[var(--color-border)] text-[var(--color-text-primary)] hover:bg-white/10 transition-colors disabled:opacity-40"
+          >
+            Clone
+          </button>
+        </div>
+        {availableRepos.length > 0 && (
+          <p className="px-3 pb-2 text-[10px] text-[var(--color-text-muted)]">
+            Available: {availableRepos.join(', ')} — use one of these names below, not a container filesystem path.
+          </p>
         )}
       </div>
 
@@ -498,7 +561,7 @@ function ManagePanel({
             value={pathInput}
             onChange={(e) => onPathInputChange(e.target.value)}
             onKeyDown={onPathInputKeyDown}
-            placeholder='Add path (e.g. "." or "/some/dir")'
+            placeholder='Repo name (e.g. "agentic-workspace" — see Available above)'
             className="flex-1 bg-[var(--color-bg-primary)] text-xs text-[var(--color-text-primary)] border border-[var(--color-border)] rounded px-2 py-1 outline-none focus:border-[var(--color-accent)]"
           />
           <button

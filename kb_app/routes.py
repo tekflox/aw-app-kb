@@ -123,6 +123,8 @@ class KnowledgeBaseRoutes:
         # monolith's shared /api/settings/aw round-trip.
         router.get("/api/kb/settings")(self.get_settings)
         router.put("/api/kb/settings")(self.save_settings)
+        router.post("/api/kb/add-repo")(self.add_repo)
+        router.get("/api/kb/repos")(self.list_repos)
 
     # ------------------------------------------------------------------
     # Helpers
@@ -341,6 +343,38 @@ class KnowledgeBaseRoutes:
             + "; ".join(calls)
         )
         return _start_job("map-and-build", code)
+
+    async def add_repo(self, data: dict = Body(...)):
+        """Clone (or pull) a git repo into REPOS_DIR so it can be mapped by
+        name — this container has no bind mount into any other repo's
+        checkout (unlike a package-relative path, which only resolves
+        something actually inside the container's own filesystem)."""
+        git_url = (data.get("git_url") or "").strip()
+        if not git_url:
+            return {"error": "git_url is required"}
+        name = (data.get("name") or "").strip() or None
+        args = ["--add-repo", git_url]
+        if name:
+            args += ["--name", name]
+        args_repr = repr(args)
+        code = (
+            "import sys; sys.path.insert(0, '.'); "
+            f"from kb_app.kb_ops import run; run({args_repr})"
+        )
+        return _start_job(f"add-repo:{name or git_url}", code)
+
+    async def list_repos(self):
+        """Repos already cloned/placed under REPOS_DIR — what a bare name in
+        Mapped Folders can actually resolve to (surfaced in the UI so
+        typing a container filesystem path by mistake, e.g.
+        /opt/aw-workspace/repos, is obviously wrong before you hit Map)."""
+        from .kb_ops import REPOS_DIR
+        if not os.path.isdir(REPOS_DIR):
+            return {"repos": []}
+        return {"repos": sorted(
+            d for d in os.listdir(REPOS_DIR)
+            if os.path.isdir(os.path.join(REPOS_DIR, d))
+        )}
 
     async def get_status(self):
         """Return current job status."""

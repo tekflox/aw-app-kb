@@ -14,6 +14,7 @@ actually takes effect here.
 from __future__ import annotations
 
 import importlib
+import os
 
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
@@ -130,6 +131,35 @@ def test_settings_roundtrip(tmp_path, monkeypatch):
 
         res = client.get("/api/kb/settings")
         assert res.json()["map_paths"] == [".", "repos/foo"]
+
+
+def test_list_repos_reflects_repos_dir(tmp_path, monkeypatch):
+    app = _make_app(tmp_path, monkeypatch)
+    with TestClient(app) as client:
+        res = client.get("/api/kb/repos")
+        assert res.json() == {"repos": []}
+
+    from kb_app import kb_ops as kb_ops_mod
+    os.makedirs(os.path.join(kb_ops_mod.REPOS_DIR, "agentic-workspace"))
+    os.makedirs(os.path.join(kb_ops_mod.REPOS_DIR, "another-repo"))
+    # A stray file (not a dir) under REPOS_DIR must not show up as a "repo".
+    with open(os.path.join(kb_ops_mod.REPOS_DIR, "not-a-repo.txt"), "w") as f:
+        f.write("x")
+
+    with TestClient(app) as client:
+        res = client.get("/api/kb/repos")
+        assert res.json() == {"repos": ["agentic-workspace", "another-repo"]}
+
+
+def test_add_repo_starts_a_job(tmp_path, monkeypatch):
+    app = _make_app(tmp_path, monkeypatch)
+    with TestClient(app) as client:
+        res = client.post("/api/kb/add-repo", json={"git_url": "https://example.invalid/x.git"})
+        assert res.status_code == 200
+        assert res.json()["started"] is True
+
+        res = client.post("/api/kb/add-repo", json={"git_url": ""})
+        assert "error" in res.json()
 
 
 def test_search_files_matches_content(tmp_path, monkeypatch):

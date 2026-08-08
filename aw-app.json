@@ -24,6 +24,7 @@
       "KB_DATA_DIR": "/app/persist/data",
       "KB_DIR_OVERRIDE": "/app/kb_output",
       "SHARED_REPOS_DIR": "/workspace-repos",
+      "MAPPED_FOLDERS_DIR": "/workspace-folders",
       "PGDATA": "/app/persist/pgdata"
     },
     "volumes": [
@@ -40,6 +41,11 @@
       {
         "source": "$AW_WORKSPACE_REPOS",
         "target": "/workspace-repos",
+        "mode": "ro"
+      },
+      {
+        "source": "$AW_WORKSPACE_FOLDERS",
+        "target": "/workspace-folders",
         "mode": "ro"
       },
       {

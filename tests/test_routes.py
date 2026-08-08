@@ -137,7 +137,7 @@ def test_list_repos_reflects_repos_dir(tmp_path, monkeypatch):
     app = _make_app(tmp_path, monkeypatch)
     with TestClient(app) as client:
         res = client.get("/api/kb/repos")
-        assert res.json() == {"repos": []}
+        assert res.json() == {"repos": [], "folders": []}
 
     from kb_app import kb_ops as kb_ops_mod
     os.makedirs(os.path.join(kb_ops_mod.REPOS_DIR, "agentic-workspace"))
@@ -148,7 +148,27 @@ def test_list_repos_reflects_repos_dir(tmp_path, monkeypatch):
 
     with TestClient(app) as client:
         res = client.get("/api/kb/repos")
-        assert res.json() == {"repos": ["agentic-workspace", "another-repo"]}
+        assert res.json() == {
+            "repos": ["agentic-workspace", "another-repo"],
+            "folders": [],
+        }
+
+
+def test_list_repos_separates_workspace_mapped_folders(tmp_path, monkeypatch):
+    """Mapped folders are reported both in the combined `repos` list (what a
+    bare name can resolve to) and on their own, so the UI can distinguish
+    "you pointed at this" from "this happens to be cloned under repos/"."""
+    app = _make_app(tmp_path, monkeypatch)
+
+    from kb_app import kb_ops as kb_ops_mod
+    folders = tmp_path / "workspace-folders"
+    os.makedirs(folders / "docs")
+    os.makedirs(os.path.join(kb_ops_mod.REPOS_DIR, "some-repo"), exist_ok=True)
+    monkeypatch.setattr(kb_ops_mod, "MAPPED_FOLDERS_DIR", str(folders))
+
+    with TestClient(app) as client:
+        res = client.get("/api/kb/repos")
+        assert res.json() == {"repos": ["docs", "some-repo"], "folders": ["docs"]}
 
 
 def test_add_repo_starts_a_job(tmp_path, monkeypatch):

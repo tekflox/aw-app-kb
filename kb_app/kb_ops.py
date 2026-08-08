@@ -49,6 +49,16 @@ REPOS_DIR = os.path.join(DATA_DIR, "repos")
 # redundant clone of kb's own — REPOS_DIR (git-cloned via --add-repo) is
 # only the fallback for a repo that isn't.
 SHARED_REPOS_DIR = os.environ.get("SHARED_REPOS_DIR", "/workspace-repos")
+# The general case, and the one with NO repository binding at all: the
+# workspace's mapped folders (aw-app.json's $AW_WORKSPACE_FOLDERS mount, backed
+# by the workspace's own /api/folders registry). Each folder the user mapped
+# appears here as <MAPPED_FOLDERS_DIR>/<name>, whatever it actually is — a
+# subdirectory of a repo, a docs tree, a host path — with no requirement that
+# it be a git checkout or that it live under the workspace's repos/ dir
+# (Frederico, 2026-08-08: "mapear pastas … sem amarracao por repositório").
+# Resolved BEFORE SHARED_REPOS_DIR: an explicitly mapped name is a deliberate
+# user choice and must win over a same-named repo that merely happens to exist.
+MAPPED_FOLDERS_DIR = os.environ.get("MAPPED_FOLDERS_DIR", "/workspace-folders")
 # The "self" directory for --map-path self-mapping detection (skip our own
 # output/data dirs rather than looping into them) — DATA_DIR is the modern
 # analog of the monolith's repo root, since KB_DIR and REPOS_DIR both live
@@ -920,11 +930,28 @@ def _format_code_map_md(data, rel_path):
     return "\n".join(lines)
 
 
+def _mapped_folder_names():
+    """Names the workspace mapped into this container via $AW_WORKSPACE_FOLDERS.
+
+    Kept separate from the repo names because they mean different things to the
+    user: these are folders they explicitly pointed at, arbitrary and not
+    necessarily git checkouts, whereas repo names are whatever happens to be
+    cloned under the workspace's repos/ dir.
+    """
+    if not os.path.isdir(MAPPED_FOLDERS_DIR):
+        return []
+    return sorted(
+        n for n in os.listdir(MAPPED_FOLDERS_DIR)
+        if os.path.isdir(os.path.join(MAPPED_FOLDERS_DIR, n))
+    )
+
+
 def _available_repo_names():
     """Every bare name --map-path/--map-all can currently resolve — the
-    shared, already-checked-out workspace repos/ dir first, then kb's own
+    workspace's mapped folders first (explicit user intent, no repo binding),
+    then the shared, already-checked-out workspace repos/ dir, then kb's own
     private clones, deduped and sorted."""
-    names = set()
+    names = set(_mapped_folder_names())
     for d in (SHARED_REPOS_DIR, REPOS_DIR):
         if os.path.isdir(d):
             names.update(n for n in os.listdir(d) if os.path.isdir(os.path.join(d, n)))
@@ -937,10 +964,13 @@ def _resolve_map_target(target):
     Accepts:
       - "." or any path  -> that directory, name = basename of resolved path
       - a bare name       -> checked in order:
-          1. SHARED_REPOS_DIR/<name> — already cloned in the workspace's own
+          1. MAPPED_FOLDERS_DIR/<name> — a folder the user mapped at the
+             workspace level (/api/folders). Any directory at all: no git
+             repo, no repos/ prefix. First because it's an explicit choice.
+          2. SHARED_REPOS_DIR/<name> — already cloned in the workspace's own
              repos/ dir (a terminal, or the git app) — read-only, no clone of
              kb's own needed.
-          2. REPOS_DIR/<name> — kb's own private clone (--add-repo).
+          3. REPOS_DIR/<name> — kb's own private clone (--add-repo).
 
     When the resolved directory is BASE_DIR (the agentic-workspace root),
     extra_skips prevents the walker from looping into KB output or runtime data.
@@ -956,6 +986,9 @@ def _resolve_map_target(target):
     if looks_like_path:
         repo_dir = os.path.abspath(target)
         repo_name = os.path.basename(repo_dir) or "root"
+    elif os.path.isdir(os.path.join(MAPPED_FOLDERS_DIR, target)):
+        repo_dir = os.path.join(MAPPED_FOLDERS_DIR, target)
+        repo_name = target
     elif os.path.isdir(os.path.join(SHARED_REPOS_DIR, target)):
         repo_dir = os.path.join(SHARED_REPOS_DIR, target)
         repo_name = target

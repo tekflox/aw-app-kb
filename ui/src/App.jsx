@@ -37,6 +37,11 @@ export default function App() {
   const [pathInput, setPathInput] = useState('');
   const [settingsSaving, setSettingsSaving] = useState(false);
   const [availableRepos, setAvailableRepos] = useState([]);
+  // Folders the user mapped at the WORKSPACE level (/api/folders), handed
+  // to this container through the $AW_WORKSPACE_FOLDERS mount. Tracked
+  // apart from availableRepos because they carry a different promise:
+  // any directory at all, chosen deliberately, with no git repo behind it.
+  const [mappedFolders, setMappedFolders] = useState([]);
 
   const outputRef = useRef(null);
   const pollRef = useRef(null);
@@ -50,7 +55,10 @@ export default function App() {
     kbGetSettings().then((s) => setMapPaths(s.map_paths || []));
     kbGetDocCount().then((d) => setDocCount(d.count ?? 0));
     kbGetStatus().then(setJobStatus);
-    kbListRepos().then((r) => setAvailableRepos(r.repos || []));
+    kbListRepos().then((r) => {
+      setAvailableRepos(r.repos || []);
+      setMappedFolders(r.folders || []);
+    });
   }, []);
 
   // Polling for job status
@@ -68,7 +76,10 @@ export default function App() {
           // Cover add-repo jobs finishing (Mapped Folders bare names resolve
           // against this list — stale list = the exact "path not found"
           // confusion this was built to prevent).
-          kbListRepos().then((r) => setAvailableRepos(r.repos || []));
+          kbListRepos().then((r) => {
+      setAvailableRepos(r.repos || []);
+      setMappedFolders(r.folders || []);
+    });
         }
       } catch {}
     };
@@ -339,6 +350,7 @@ export default function App() {
             displayLines={displayLines}
             settingsSaving={settingsSaving}
             availableRepos={availableRepos}
+            mappedFolders={mappedFolders}
             onAddPath={handleAddPath}
             onRemovePath={handleRemovePath}
             onMapOne={handleMapOne}
@@ -454,7 +466,7 @@ function Spinner({ size = '3' }) {
 // ---------------------------------------------------------------------------
 function ManagePanel({
   mapPaths, pathInput, force, jobStatus, docCount, outputRef, displayLines,
-  settingsSaving, availableRepos,
+  settingsSaving, availableRepos, mappedFolders,
   onAddPath, onRemovePath, onMapOne, onMapAndBuild, onBuildOnly,
   onPathInputChange, onForceChange, onSaveSettings, onPathInputKeyDown,
 }) {
@@ -469,19 +481,34 @@ function ManagePanel({
         )}
       </div>
 
-      {/* Mapped Folders — a bare name resolves against the workspace's own
-          repos/ dir (already checked out by a terminal or the git app,
-          read-only $AW_WORKSPACE_REPOS mount) first, falling back to this
-          app's own private clones. Point at a folder that's already there;
-          this app doesn't clone repos itself. */}
+      {/* Mapped Folders — a bare name resolves, in order, against the folders
+          the user mapped at the workspace level (any directory at all, via
+          Workspace > Folders / `aw-workspace-cli folders add`, mounted here
+          read-only through $AW_WORKSPACE_FOLDERS), then the workspace's own
+          repos/ dir, then this app's private clones. The first of those is
+          what removes the old repository binding: the folder no longer has
+          to be a git checkout, or live under repos/, to be indexable. */}
       <div className="border border-[var(--color-border)] rounded overflow-hidden">
         <div className="px-3 py-2 bg-[var(--color-bg-header)] flex items-center justify-between">
           <span className="text-xs font-semibold text-[var(--color-text-primary)]">Mapped Folders</span>
           <span className="text-[10px] text-[var(--color-text-muted)]">{mapPaths.length} paths</span>
         </div>
+        {mappedFolders.length > 0 && (
+          <p className="px-3 pt-2 text-[10px] text-[var(--color-text-muted)]">
+            <span className="text-[var(--color-accent)]">Workspace folders:</span>{' '}
+            {mappedFolders.join(', ')} — any folder, no git repo needed.
+          </p>
+        )}
         {availableRepos.length > 0 && (
           <p className="px-3 pt-2 text-[10px] text-[var(--color-text-muted)]">
             Available: {availableRepos.join(', ')} — use one of these names below, not a container filesystem path.
+          </p>
+        )}
+        {mappedFolders.length === 0 && (
+          <p className="px-3 pt-2 text-[10px] text-[var(--color-text-muted)]">
+            Want to index a folder that isn't a repo? Map it once with{' '}
+            <span className="font-mono">aw-workspace-cli folders add /absolute/path</span>{' '}
+            and its name becomes usable below.
           </p>
         )}
         <div className="divide-y divide-[var(--color-border)]">

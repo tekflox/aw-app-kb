@@ -365,12 +365,22 @@ class KnowledgeBaseRoutes:
 
     async def list_repos(self):
         """Every bare name a Mapped Folders entry can actually resolve to —
-        the shared, already-checked-out workspace repos/ dir (read-only
-        $AW_WORKSPACE_REPOS mount) plus kb's own private clones — surfaced
-        in the UI so typing a container filesystem path by mistake, e.g.
-        /opt/aw-workspace/repos, is obviously wrong before you hit Map."""
-        from .kb_ops import _available_repo_names
-        return {"repos": _available_repo_names()}
+        surfaced in the UI so typing a container filesystem path by mistake,
+        e.g. /opt/aw-workspace/repos, is obviously wrong before you hit Map.
+
+        ``folders`` is returned separately from the combined ``repos`` list
+        (which still contains everything, for older UI builds): the two are
+        different promises. A folder is something the user deliberately
+        mapped at the workspace level and can be ANY directory, while a repo
+        name is just whatever happens to be cloned under the workspace's
+        repos/ dir — so the UI can say "you mapped these" instead of
+        flattening both into one anonymous list of names.
+        """
+        from .kb_ops import _available_repo_names, _mapped_folder_names
+        return {
+            "repos": _available_repo_names(),
+            "folders": _mapped_folder_names(),
+        }
 
     async def get_status(self):
         """Return current job status."""

@@ -108,3 +108,67 @@ def test_add_repo_custom_name(tmp_path, monkeypatch):
     name = kb_ops._add_repo(str(src), name="custom-name")
     assert name == "custom-name"
     assert (tmp_path / "repos" / "custom-name" / "f.txt").exists()
+
+
+# --- workspace mapped folders (no repository binding) ------------------------
+
+
+def test_resolve_map_target_prefers_a_mapped_folder_over_a_same_named_repo(tmp_path, monkeypatch):
+    """An explicitly mapped folder is a deliberate user choice; a repo that
+    merely happens to share the name must not shadow it."""
+    folders = tmp_path / "workspace-folders"
+    shared = tmp_path / "shared-repos"
+    (folders / "docs").mkdir(parents=True)
+    (shared / "docs").mkdir(parents=True)
+    monkeypatch.setattr(kb_ops, "MAPPED_FOLDERS_DIR", str(folders))
+    monkeypatch.setattr(kb_ops, "SHARED_REPOS_DIR", str(shared))
+
+    repo_dir, repo_name, _ = kb_ops._resolve_map_target("docs")
+
+    assert repo_dir == str(folders / "docs")
+    assert repo_name == "docs"
+
+
+def test_mapped_folder_needs_no_git_repo_and_no_repos_dir(tmp_path, monkeypatch):
+    """The whole point: a plain directory, not a checkout, not under repos/."""
+    folders = tmp_path / "workspace-folders"
+    (folders / "notes").mkdir(parents=True)
+    (folders / "notes" / "a.md").write_text("# hi")
+    monkeypatch.setattr(kb_ops, "MAPPED_FOLDERS_DIR", str(folders))
+    monkeypatch.setattr(kb_ops, "SHARED_REPOS_DIR", str(tmp_path / "nope"))
+    monkeypatch.setattr(kb_ops, "REPOS_DIR", str(tmp_path / "also-nope"))
+
+    repo_dir, repo_name, _ = kb_ops._resolve_map_target("notes")
+
+    assert repo_dir == str(folders / "notes")
+    assert not (folders / "notes" / ".git").exists()
+
+
+def test_mapped_folder_names_lists_only_directories(tmp_path, monkeypatch):
+    folders = tmp_path / "workspace-folders"
+    (folders / "docs").mkdir(parents=True)
+    (folders / "datasets").mkdir(parents=True)
+    (folders / "stray.txt").write_text("x")
+    monkeypatch.setattr(kb_ops, "MAPPED_FOLDERS_DIR", str(folders))
+
+    assert kb_ops._mapped_folder_names() == ["datasets", "docs"]
+
+
+def test_mapped_folder_names_is_empty_when_the_mount_is_absent(tmp_path, monkeypatch):
+    """An older workspace core with no $AW_WORKSPACE_FOLDERS support just
+    doesn't create the mount — that must degrade, not raise."""
+    monkeypatch.setattr(kb_ops, "MAPPED_FOLDERS_DIR", str(tmp_path / "missing"))
+
+    assert kb_ops._mapped_folder_names() == []
+
+
+def test_available_repo_names_includes_mapped_folders(tmp_path, monkeypatch):
+    folders = tmp_path / "workspace-folders"
+    shared = tmp_path / "shared-repos"
+    (folders / "docs").mkdir(parents=True)
+    (shared / "aw-console").mkdir(parents=True)
+    monkeypatch.setattr(kb_ops, "MAPPED_FOLDERS_DIR", str(folders))
+    monkeypatch.setattr(kb_ops, "SHARED_REPOS_DIR", str(shared))
+    monkeypatch.setattr(kb_ops, "REPOS_DIR", str(tmp_path / "private"))
+
+    assert kb_ops._available_repo_names() == ["aw-console", "docs"]

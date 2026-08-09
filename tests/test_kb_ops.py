@@ -172,3 +172,27 @@ def test_available_repo_names_includes_mapped_folders(tmp_path, monkeypatch):
     monkeypatch.setattr(kb_ops, "REPOS_DIR", str(tmp_path / "private"))
 
     assert kb_ops._available_repo_names() == ["aw-console", "docs"]
+
+
+def test_workspace_state_dir_is_skipped(tmp_path, monkeypatch):
+    """Mapping a workspace ROOT must not walk into `.aw-workspace` — that's
+    this app's own KB output, its data dir and the shared venv. Reachable
+    only since arbitrary folders became mappable, and the BASE_DIR self-map
+    guard never fires for it (the root arrives as /workspace-folders/<name>)."""
+    assert ".aw-workspace" in kb_ops.SKIP_DIRS
+
+    folders = tmp_path / "workspace-folders"
+    root = folders / "aw-workspace"
+    (root / "src").mkdir(parents=True)
+    (root / "src" / "real.py").write_text("def keep(): pass\n")
+    (root / ".aw-workspace" / "knowledge_base").mkdir(parents=True)
+    (root / ".aw-workspace" / "knowledge_base" / "noise.py").write_text("def drop(): pass\n")
+    monkeypatch.setattr(kb_ops, "MAPPED_FOLDERS_DIR", str(folders))
+
+    walked = []
+    for dirpath, dirs, files in __import__("os").walk(str(root)):
+        dirs[:] = [d for d in dirs if d not in kb_ops.SKIP_DIRS]
+        walked.extend(files)
+
+    assert "real.py" in walked
+    assert "noise.py" not in walked

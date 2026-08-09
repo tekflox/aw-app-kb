@@ -348,6 +348,16 @@ SKIP_DIRS = {
     ".mypy_cache", ".pytest_cache", "dist", "build", ".next", ".nuxt",
     "coverage", ".coverage", "egg-info", ".eggs", "vendor", "bower_components",
     "target", ".gradle", "bin", "obj",
+    # An aw-workspace's own state dir. Skipped for the same reason the
+    # self-map skips `knowledge_base`: it holds THIS app's indexed output
+    # (`.aw-workspace/knowledge_base`), its Postgres/data dir, the shared
+    # venv, and app-private clones — so walking it means indexing our own
+    # output and re-indexing repos under a second path. Only became
+    # reachable once arbitrary folders could be mapped: pointing at the
+    # workspace root (`/opt/aw-workspace`) is now a normal thing to do, and
+    # the old BASE_DIR-only self-map guard never fires for it because the
+    # root arrives as just another `/workspace-folders/<name>`.
+    ".aw-workspace",
 }
 
 # HTML files are treated as documents (converted to Markdown), not code.

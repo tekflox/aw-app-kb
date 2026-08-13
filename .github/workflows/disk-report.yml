@@ -1,21 +1,17 @@
 name: Disk report
-
-# TEMPORARY, read-only. Delete once the space is accounted for.
 on:
   workflow_dispatch: {}
-
 jobs:
   report:
     runs-on: [self-hosted, aw-baremetal]
     steps:
-      - name: Disk usage
+      - name: Where the space is
         run: |
           set +e
-          echo "=== can we sudo? ==="; sudo -n true && echo yes || echo "no (passwordless sudo unavailable)"
-          echo "=== / top level ==="; du -xh --max-depth=1 / 2>&1 | grep -vi "permission denied" | sort -rh | head -16
-          echo "=== /var ==="; du -xh --max-depth=2 /var 2>&1 | grep -vi "permission denied" | sort -rh | head -14
-          echo "=== /home ==="; du -xh --max-depth=3 /home 2>&1 | grep -vi "permission denied" | sort -rh | head -16
-          echo "=== docker ==="; docker system df 2>&1 | head -8
-          echo "=== podman ==="; podman system df 2>&1 | head -8
-          echo "=== biggest files anywhere readable ==="
-          find / -xdev -type f -size +2G 2>/dev/null | head -20
+          echo "=== /opt (111G) ==="; du -xh --max-depth=2 /opt 2>&1 | grep -vi "permission denied" | sort -rh | head -20
+          echo "=== biggest files >1G ==="; find /opt /home /var -xdev -type f -size +1G 2>/dev/null | head -25
+          echo "=== sizes of those ==="; find /opt /home /var -xdev -type f -size +1G -exec ls -lh {} \; 2>/dev/null | awk '{print $5"\t"$9}' | sort -rh | head -25
+          echo "=== /var/log ==="; du -xh --max-depth=2 /var/log 2>&1 | grep -vi "permission denied" | sort -rh | head -10
+          echo "=== docker reclaimable detail ==="; docker system df -v 2>&1 | head -5
+          echo "=== dangling images ==="; docker images -f dangling=true --format "{{.Size}}\t{{.ID}}" 2>&1 | sort -rh | head -10
+          echo "=== exited containers ==="; docker ps -a --filter status=exited --format "{{.Names}}\t{{.Status}}" 2>&1 | wc -l

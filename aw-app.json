@@ -2,8 +2,8 @@
   "manifest_version": 1,
   "id": "kb",
   "name": "Knowledge Base",
-  "version": "0.16.0",
-  "description": "Semantic search over project docs and skills, backed by Postgres/pgvector. Ported from the agentic-workspace monolith's Knowledge Base \u2014 file browser/editor, semantic + text search, code-map build jobs, and an MCP surface (search/update/delete_knowledge_base, search/load_skill) that aw-mcp-gateway picks up automatically.",
+  "version": "0.17.0",
+  "description": "Semantic search over project docs and skills, backed by Postgres/pgvector. Ported from the agentic-workspace monolith's Knowledge Base — file browser/editor, semantic + text search, code-map build jobs, and an MCP surface (search/update/delete_knowledge_base, search/load_skill) that aw-mcp-gateway picks up automatically.",
   "icon": "book-open",
   "tier": "container",
   "category": "Services",
@@ -25,7 +25,8 @@
       "KB_DIR_OVERRIDE": "/app/kb_output",
       "SHARED_REPOS_DIR": "/workspace-repos",
       "MAPPED_FOLDERS_DIR": "/workspace-folders",
-      "PGDATA": "/app/persist/pgdata"
+      "PGDATA": "/app/persist/pgdata",
+      "KB_SKILLS_DIR": "/app/skills"
     },
     "volumes": [
       {
@@ -46,6 +47,11 @@
       {
         "source": "$AW_WORKSPACE_FOLDERS",
         "target": "/workspace-folders",
+        "mode": "ro"
+      },
+      {
+        "source": "$AW_WORKSPACE_SKILLS",
+        "target": "/app/skills",
         "mode": "ro"
       },
       {

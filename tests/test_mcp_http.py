@@ -70,3 +70,15 @@ def test_unknown_tool_reports_error():
 def test_unknown_method_returns_json_rpc_error():
     resp = mcp_http.handle_request({"jsonrpc": "2.0", "id": 7, "method": "bogus"})
     assert resp["error"]["code"] == -32601
+
+
+def test_manifest_mounts_the_workspace_skills_tree():
+    """load_skill reads SKILLS_DIR off the container filesystem. Without this
+    volume nothing ever put the workspace skills there, so load_skill failed
+    for every skill and agents built around it ran with no instructions."""
+    import json, pathlib
+    m = json.loads((pathlib.Path(__file__).parent.parent / "aw-app.json").read_text())
+    vols = {v["source"]: v for v in m["runtime"]["volumes"]}
+    assert vols["$AW_WORKSPACE_SKILLS"]["target"] == "/app/skills"
+    assert vols["$AW_WORKSPACE_SKILLS"]["mode"] == "ro"
+    assert m["runtime"]["env"]["KB_SKILLS_DIR"] == "/app/skills"

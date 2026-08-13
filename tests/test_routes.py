@@ -121,16 +121,29 @@ def test_path_traversal_is_rejected(tmp_path, monkeypatch):
 
 
 def test_settings_roundtrip(tmp_path, monkeypatch):
+    from kb_app.settings import DEFAULT_MAP_PATHS
+
     app = _make_app(tmp_path, monkeypatch)
     with TestClient(app) as client:
+        # A fresh install is seeded, so the KB indexes something useful
+        # without anyone configuring it first.
         res = client.get("/api/kb/settings")
-        assert res.json() == {"map_paths": []}
+        assert res.json() == {"map_paths": DEFAULT_MAP_PATHS}
 
         res = client.put("/api/kb/settings", json={"map_paths": [".", "repos/foo"]})
         assert res.json()["map_paths"] == [".", "repos/foo"]
 
         res = client.get("/api/kb/settings")
         assert res.json()["map_paths"] == [".", "repos/foo"]
+
+
+def test_seeded_map_paths_can_be_emptied_for_good(tmp_path, monkeypatch):
+    """The seed is a DEFAULT, not a floor: clearing it has to stick, or the
+    user could never stop indexing the repos tree."""
+    app = _make_app(tmp_path, monkeypatch)
+    with TestClient(app) as client:
+        client.put("/api/kb/settings", json={"map_paths": []})
+        assert client.get("/api/kb/settings").json()["map_paths"] == []
 
 
 def test_list_repos_reflects_repos_dir(tmp_path, monkeypatch):

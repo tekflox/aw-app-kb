@@ -1,0 +1,15 @@
+name: MySQL binlog fix
+on:
+  workflow_dispatch:
+    inputs:
+      apply:
+        description: "apply the config change"
+        type: boolean
+        default: false
+jobs:
+  fix:
+    runs-on: [self-hosted, aw-baremetal]
+    steps:
+      - uses: actions/checkout@v4
+      - name: Recon
+        run: sh .github/scripts/mysql-recon.sh

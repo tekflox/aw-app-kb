@@ -1,0 +1,21 @@
+name: Disk report
+
+# TEMPORARY, read-only. The BYOD host reports 436G/98% full, but every
+# namespace reachable from inside the workspace only sees ~17G of it — the
+# rest lives on the bare metal, and this runner IS the bare metal.
+# Delete once the space has been accounted for.
+on:
+  workflow_dispatch: {}
+
+jobs:
+  report:
+    runs-on: [self-hosted, aw-baremetal]
+    steps:
+      - name: Disk usage
+        run: |
+          echo "=== hostname ==="; hostname
+          echo "=== df ==="; df -h | grep -vE "tmpfs|overlay" | head -12
+          echo "=== / top level ==="; sudo du -xh --max-depth=1 / 2>/dev/null | sort -rh | head -15
+          echo "=== /var ==="; sudo du -xh --max-depth=2 /var 2>/dev/null | sort -rh | head -15
+          echo "=== /home ==="; sudo du -xh --max-depth=2 /home 2>/dev/null | sort -rh | head -15
+          echo "=== docker/podman ==="; sudo docker system df 2>/dev/null || true

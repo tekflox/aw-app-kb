@@ -367,6 +367,17 @@ HTML_EXTENSIONS = {".html": "HTML", ".htm": "HTML"}
 # Extra directories to skip when walking for HTML — coverage reports,
 # recorded sessions, test fixtures, and other generated HTML noise that
 # would flood the KB without adding signal.
+# Prose that is ALREADY the thing we want indexed. Code gets summarised into
+# a map and HTML gets converted, but a Markdown doc needs neither — it is
+# carried through verbatim.
+#
+# Without this the mapper walked code and HTML only, so a folder of plain
+# documentation mapped to literally nothing: "0 new, 0 updated, 0 unchanged,
+# 0 skipped" and an empty output dir, with no hint that every file had been
+# filtered out. That silently defeats the entire point of mapping a docs or
+# skills folder (2026-08-13: `docs` and `skills` both mapped 0 files).
+DOC_EXTENSIONS = {".md", ".markdown", ".mdx", ".rst", ".txt"}
+
 HTML_SKIP_DIRS = {
     "coverage_html", "htmlcov", "coverage-report", "coverage_report",
     ".tmp", "tmp", "recordings", "site-packages", "_site", ".cache",
@@ -1078,6 +1089,7 @@ def _map_repo(target, force=False):
     total_skipped = 0
     total_empty = 0
     total_html = 0
+    total_docs = 0
 
     print(f"Mapping {repo_dir} -> {out_dir}")
     if extra_skips:
@@ -1102,7 +1114,8 @@ def _map_repo(target, force=False):
             ext = os.path.splitext(fname)[1].lower()
             is_code = ext in CODE_EXTENSIONS
             is_html = ext in HTML_EXTENSIONS and not in_html_skip
-            if not (is_code or is_html):
+            is_doc = ext in DOC_EXTENSIONS
+            if not (is_code or is_html or is_doc):
                 continue
 
             src_path = os.path.join(root, fname)
@@ -1120,7 +1133,9 @@ def _map_repo(target, force=False):
 
             checksum = _sha256(source)
 
-            out_rel = rel_path + ".md"
+            # A .md doc keeps its own name: appending another .md would make
+            # the KB show "SKILL.md.md".
+            out_rel = rel_path if (is_doc and ext == ".md") else rel_path + ".md"
             out_path = os.path.join(out_dir, out_rel)
 
             if os.path.isfile(out_path) and not force:
@@ -1137,7 +1152,15 @@ def _map_repo(target, force=False):
                 except Exception:
                     pass
 
-            if is_html:
+            if is_doc:
+                # Already prose — no extraction, no summarising. Any
+                # frontmatter the source carries is dropped, because
+                # _write_kb_file adds our own below and two blocks would
+                # make the file unparseable.
+                _, body = _parse_frontmatter(source)
+                data = None if not body.strip() else body
+                doc_type = "doc"
+            elif is_html:
                 data = _extract_html(source, rel_path)
                 doc_type = "html-doc"
             else:
@@ -1154,7 +1177,10 @@ def _map_repo(target, force=False):
                 total_empty += 1
                 continue
 
-            if is_html:
+            if is_doc:
+                content = data
+                total_docs += 1
+            elif is_html:
                 content = _format_html_md(data, rel_path)
                 total_html += 1
             else:
@@ -1179,6 +1205,8 @@ def _map_repo(target, force=False):
     print(f"  {total_new} new, {total_updated} updated, {total_skipped} unchanged, {total_empty} skipped (empty/no structure)")
     if total_html:
         print(f"  {total_html} HTML document(s) converted to Markdown")
+    if total_docs:
+        print(f"  {total_docs} Markdown/text document(s) carried through as-is")
     print(f"  Output: {out_dir}")
 
 

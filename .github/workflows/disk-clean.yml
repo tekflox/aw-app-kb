@@ -1,0 +1,39 @@
+name: Disk clean
+on:
+  workflow_dispatch:
+    inputs:
+      apply:
+        description: "actually delete (else report only)"
+        type: boolean
+        default: false
+jobs:
+  clean:
+    runs-on: [self-hosted, aw-baremetal]
+    steps:
+      - name: Recon + docker build cache
+        run: |
+          set +e
+          echo "=== I am running on ==="; echo "RUNNER_NAME=$RUNNER_NAME"; echo "WORKSPACE=$GITHUB_WORKSPACE"
+          echo "=== root access? ==="; sudo -n true && echo "sudo:yes" || echo "sudo:no"
+          docker info >/dev/null 2>&1 && echo "docker:yes (docker group == root on host)" || echo "docker:no"
+          echo "=== waydroid: package or leftovers? ==="
+          which waydroid || echo "no waydroid binary on PATH"
+          systemctl list-unit-files 2>/dev/null | grep -i waydroid || echo "no waydroid systemd units"
+          dpkg -l 2>/dev/null | grep -i waydroid || echo "no waydroid apt package"
+          snap list 2>/dev/null | grep -i waydroid || echo "no waydroid snap"
+          echo "=== gh-runners: busy or idle? ==="
+          ps -eo args | grep -c "[R]unner.Worker"
+          for d in /home/ubuntu/gh-runners/*/; do
+            n=$(basename "$d")
+            busy=$(ps -eo args | grep "[R]unner.Worker" | grep -c "$n")
+            sz=$(du -sh "$d/_work" 2>/dev/null | cut -f1)
+            dg=$(du -sh "$d/_diag" 2>/dev/null | cut -f1)
+            echo "$n  _work=$sz  _diag=$dg  busy=$busy"
+          done
+          echo "=== /var/log rotated files ==="
+          ls -lh /var/log/*.1 /var/log/*.gz 2>/dev/null | awk '{print $5"\t"$9}' | head -12
+          echo "=== docker build cache BEFORE ==="; docker system df | sed -n '1p;5p'
+          if [ "${{ inputs.apply }}" = "true" ]; then
+            echo "=== pruning build cache ==="; docker builder prune -a -f 2>&1 | tail -3
+            echo "=== AFTER ==="; docker system df | sed -n '1p;5p'; df -h / | tail -1
+          fi

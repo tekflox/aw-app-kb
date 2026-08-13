@@ -213,3 +213,26 @@ def test_doc_count_reflects_kb_pg(tmp_path, monkeypatch):
     with TestClient(app) as client:
         res = client.get("/api/kb/doc-count")
     assert res.json() == {"count": 42}
+
+
+def test_translated_host_path_keeps_the_users_name(tmp_path, monkeypatch):
+    """A host path is named after ITSELF, not after the mount we find it on.
+
+    /opt/aw-workspace/repos is translated to /workspace-repos in here; taking
+    the basename after that showed the folder as "workspace-repos" in the KB,
+    a name the user never typed and does not recognise.
+    """
+    import importlib
+    monkeypatch.setenv("KB_DATA_DIR", str(tmp_path))
+    monkeypatch.setenv("AW_WORKSPACE_CONTAINER_DIR", "/opt/aw-workspace")
+    mount = tmp_path / "workspace-repos"
+    (mount / "some-repo").mkdir(parents=True)
+    monkeypatch.setenv("SHARED_REPOS_DIR", str(mount))
+
+    from kb_app import kb_ops
+    importlib.reload(kb_ops)
+
+    repo_dir, repo_name, _ = kb_ops._resolve_map_target("/opt/aw-workspace/repos")
+
+    assert repo_name == "repos"
+    assert repo_dir == str(mount)

@@ -1049,8 +1049,15 @@ def _resolve_map_target(target):
     )
 
     if looks_like_path:
-        repo_dir = _translate_host_path(os.path.abspath(target))
-        repo_name = os.path.basename(repo_dir.rstrip(os.sep)) or "root"
+        # Name from what the USER asked for, not from where we found it.
+        # _translate_host_path rewrites /opt/aw-workspace/repos to the mount
+        # it lives on in here (/workspace-repos), and taking the basename
+        # AFTER that leaked the mount's name into the KB: the sidebar showed
+        # "workspace-repos" for a folder the user knows as "repos".
+        # Where it is mounted is our business; what it is called is theirs.
+        source = os.path.abspath(target)
+        repo_dir = _translate_host_path(source)
+        repo_name = os.path.basename(source.rstrip(os.sep)) or "root"
     elif os.path.isdir(os.path.join(MAPPED_FOLDERS_DIR, target)):
         repo_dir = os.path.join(MAPPED_FOLDERS_DIR, target)
         repo_name = target

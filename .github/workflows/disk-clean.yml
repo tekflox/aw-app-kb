@@ -3,37 +3,65 @@ on:
   workflow_dispatch:
     inputs:
       apply:
-        description: "actually delete (else report only)"
+        description: "actually delete"
         type: boolean
         default: false
 jobs:
   clean:
     runs-on: [self-hosted, aw-baremetal]
     steps:
-      - name: Recon + docker build cache
+      - name: Clean
         run: |
           set +e
-          echo "=== I am running on ==="; echo "RUNNER_NAME=$RUNNER_NAME"; echo "WORKSPACE=$GITHUB_WORKSPACE"
-          echo "=== root access? ==="; sudo -n true && echo "sudo:yes" || echo "sudo:no"
-          docker info >/dev/null 2>&1 && echo "docker:yes (docker group == root on host)" || echo "docker:no"
-          echo "=== waydroid: package or leftovers? ==="
-          which waydroid || echo "no waydroid binary on PATH"
-          systemctl list-unit-files 2>/dev/null | grep -i waydroid || echo "no waydroid systemd units"
-          dpkg -l 2>/dev/null | grep -i waydroid || echo "no waydroid apt package"
-          snap list 2>/dev/null | grep -i waydroid || echo "no waydroid snap"
-          echo "=== gh-runners: busy or idle? ==="
-          ps -eo args | grep -c "[R]unner.Worker"
+          APPLY="${{ inputs.apply }}"
+          echo "=== BEFORE ==="; df -h / | tail -1
+
+          # --- 1. docker build cache (docker group, no root needed) ---
+          echo "### docker build cache"
+          docker system df | sed -n '1p;5p'
+          [ "$APPLY" = "true" ] && docker builder prune -a -f 2>&1 | tail -2
+
+          # --- 2. gh-runners _work/_diag, idle runners only ---
+          # NEVER the runner this job is executing on: its _work holds our own
+          # checkout, and deleting it kills this very run.
+          echo "### gh-runners"
+          SELF=$(echo "$GITHUB_WORKSPACE" | cut -d/ -f5)
+          echo "self=$SELF"
           for d in /home/ubuntu/gh-runners/*/; do
             n=$(basename "$d")
-            busy=$(ps -eo args | grep "[R]unner.Worker" | grep -c "$n")
+            [ "$n" = "$SELF" ] && { echo "  skip $n (this job)"; continue; }
+            if ps -eo args | grep "[R]unner.Worker" | grep -q "$n"; then
+              echo "  skip $n (busy)"; continue
+            fi
             sz=$(du -sh "$d/_work" 2>/dev/null | cut -f1)
-            dg=$(du -sh "$d/_diag" 2>/dev/null | cut -f1)
-            echo "$n  _work=$sz  _diag=$dg  busy=$busy"
+            if [ "$APPLY" = "true" ]; then
+              rm -rf "$d"/_work/* 2>/dev/null
+              find "$d/_diag" -type f -name "*.log" -delete 2>/dev/null
+            fi
+            echo "  cleaned $n (_work was $sz)"
           done
-          echo "=== /var/log rotated files ==="
-          ls -lh /var/log/*.1 /var/log/*.gz 2>/dev/null | awk '{print $5"\t"$9}' | head -12
-          echo "=== docker build cache BEFORE ==="; docker system df | sed -n '1p;5p'
-          if [ "${{ inputs.apply }}" = "true" ]; then
-            echo "=== pruning build cache ==="; docker builder prune -a -f 2>&1 | tail -3
-            echo "=== AFTER ==="; docker system df | sed -n '1p;5p'; df -h / | tail -1
+
+          # --- 3. root-level: /var/log + waydroid, via a container ---
+          # No passwordless sudo here, but membership of the docker group is
+          # root on the host by construction; this is the only route.
+          echo "### root-level (via container)"
+          if [ "$APPLY" = "true" ]; then
+            docker run --rm --privileged -v /:/host alpine sh -s <<'INNER'
+              set +e
+              echo "-- /var/log before: $(du -sh /host/var/log 2>/dev/null | cut -f1)"
+              find /host/var/log -type f \( -name '*.1' -o -name '*.gz' -o -name '*.old' -o -name '*.[0-9]' \) -delete
+              find /host/var/log/journal -type f -name '*@*.journal' -delete
+              : > /host/var/log/syslog
+              : > /host/var/log/kern.log
+              echo "-- /var/log after:  $(du -sh /host/var/log 2>/dev/null | cut -f1)"
+
+              echo "-- waydroid data: $(du -sh /host/var/lib/waydroid 2>/dev/null | cut -f1)"
+              rm -rf /host/var/lib/waydroid /host/etc/waydroid* /host/usr/share/waydroid* /host/home/ubuntu/.local/share/waydroid
+              echo "-- waydroid apt purge:"
+              chroot /host /bin/bash -c "apt-mark unhold waydroid >/dev/null 2>&1; DEBIAN_FRONTEND=noninteractive apt-get purge -y waydroid 2>&1 | tail -4; apt-get autoremove -y 2>&1 | tail -2"
+              echo "-- waydroid binary still there? "; ls /host/usr/bin/waydroid 2>/dev/null || echo "gone"
+INNER
           fi
+
+          echo "=== AFTER ==="; df -h / | tail -1
+          docker system df | sed -n '1p;5p'

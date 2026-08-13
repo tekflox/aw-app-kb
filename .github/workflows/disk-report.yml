@@ -1,9 +1,6 @@
 name: Disk report
 
-# TEMPORARY, read-only. The BYOD host reports 436G/98% full, but every
-# namespace reachable from inside the workspace only sees ~17G of it — the
-# rest lives on the bare metal, and this runner IS the bare metal.
-# Delete once the space has been accounted for.
+# TEMPORARY, read-only. Delete once the space is accounted for.
 on:
   workflow_dispatch: {}
 
@@ -13,9 +10,12 @@ jobs:
     steps:
       - name: Disk usage
         run: |
-          echo "=== hostname ==="; hostname
-          echo "=== df ==="; df -h | grep -vE "tmpfs|overlay" | head -12
-          echo "=== / top level ==="; sudo du -xh --max-depth=1 / 2>/dev/null | sort -rh | head -15
-          echo "=== /var ==="; sudo du -xh --max-depth=2 /var 2>/dev/null | sort -rh | head -15
-          echo "=== /home ==="; sudo du -xh --max-depth=2 /home 2>/dev/null | sort -rh | head -15
-          echo "=== docker/podman ==="; sudo docker system df 2>/dev/null || true
+          set +e
+          echo "=== can we sudo? ==="; sudo -n true && echo yes || echo "no (passwordless sudo unavailable)"
+          echo "=== / top level ==="; du -xh --max-depth=1 / 2>&1 | grep -vi "permission denied" | sort -rh | head -16
+          echo "=== /var ==="; du -xh --max-depth=2 /var 2>&1 | grep -vi "permission denied" | sort -rh | head -14
+          echo "=== /home ==="; du -xh --max-depth=3 /home 2>&1 | grep -vi "permission denied" | sort -rh | head -16
+          echo "=== docker ==="; docker system df 2>&1 | head -8
+          echo "=== podman ==="; podman system df 2>&1 | head -8
+          echo "=== biggest files anywhere readable ==="
+          find / -xdev -type f -size +2G 2>/dev/null | head -20

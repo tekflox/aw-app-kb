@@ -1208,14 +1208,50 @@ def _add_repo(git_url: str, name: str | None = None) -> str:
 
 
 def _map_all(force: bool = False) -> None:
-    """Map every path listed in this app's own settings.json (map_paths)."""
+    """Map every folder the WORKSPACE has mapped, plus any extra names in
+    this app's own settings.
+
+    The workspace's mapped folders (Workspace > Folders / `aw-workspace-cli
+    folders add`, reaching us as ``$AW_WORKSPACE_FOLDERS`` binds under
+    MAPPED_FOLDERS_DIR) are the single source of truth for "what should the
+    KB index". They are what the user actually edits, in one place, in the
+    UI — so nothing has to be kept in sync by hand here.
+
+    ``map_paths`` used to BE that list, maintained separately, and drifted
+    exactly the way a duplicated list does: it held the absolute host path
+    ``/opt/aw-workspace``, which this container cannot see (it sees that same
+    folder as ``<MAPPED_FOLDERS_DIR>/aw-workspace``). So every ``--map-all``
+    died on "Repo not found at /opt/aw-workspace" and, because the Syncs task
+    chains ``--map-all && --build``, the KB silently stopped being reindexed
+    altogether. Found 2026-08-13.
+
+    ``map_paths`` is kept, but demoted to what only it can express: names that
+    are NOT workspace folders — kb's own private clones from ``--add-repo``.
+    Entries that duplicate a mapped folder are skipped rather than mapped
+    twice, and absolute paths in it are reported instead of failing silently.
+    """
     from .settings import get_settings
-    paths = get_settings().get("map_paths", [])
-    if not paths:
-        print("No map_paths configured — set them via PUT /api/kb/settings.")
+
+    mapped = _mapped_folder_names()
+    extras = [p for p in (get_settings().get("map_paths") or []) if p not in mapped]
+
+    if not mapped and not extras:
+        print("Nothing to map: no workspace folders are mapped into this app. "
+              "Map one with `aw-workspace-cli folders add /absolute/path`.")
         return
-    print(f"Mapping {len(paths)} path(s) from config: {', '.join(paths)}")
-    for p in paths:
+
+    if mapped:
+        print(f"Mapping {len(mapped)} workspace folder(s): {', '.join(mapped)}")
+        for name in mapped:
+            _map_repo(name, force=force)
+
+    for p in extras:
+        if os.path.isabs(p) and not os.path.isdir(p):
+            print(f"Skipping {p!r}: an absolute host path this container cannot see. "
+                  f"Map it at the workspace level instead and it will be picked "
+                  f"up here automatically.")
+            continue
+        print(f"Mapping extra path from settings: {p}")
         _map_repo(p, force=force)
 
 

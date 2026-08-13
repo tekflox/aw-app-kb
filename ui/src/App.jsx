@@ -481,43 +481,85 @@ function ManagePanel({
         )}
       </div>
 
-      {/* Mapped Folders — a bare name resolves, in order, against the folders
-          the user mapped at the workspace level (any directory at all, via
-          Workspace > Folders / `aw-workspace-cli folders add`, mounted here
-          read-only through $AW_WORKSPACE_FOLDERS), then the workspace's own
-          repos/ dir, then this app's private clones. The first of those is
-          what removes the old repository binding: the folder no longer has
-          to be a git checkout, or live under repos/, to be indexable. */}
+      {/* Mapped Folders — the workspace's own folder map IS the source of
+          truth for what gets indexed. The user maintains it in ONE place
+          (Workspace > Folders / `aw-workspace-cli folders add`) and it
+          reaches this container as $AW_WORKSPACE_FOLDERS binds, so this
+          panel only reflects it; there is nothing to keep in sync by hand.
+
+          This list used to render `map_paths` — a second, app-local copy of
+          the same idea — under this same "Mapped Folders" heading. The two
+          drifted (map_paths held the absolute host path /opt/aw-workspace,
+          invisible from in here) and the panel showed the stale copy, so the
+          UI said one thing while --map-all did another. map_paths survives
+          below as "Extra paths", scoped to the one case workspace folders
+          can't express: kb's own private clones from --add-repo. */}
       <div className="border border-[var(--color-border)] rounded overflow-hidden">
         <div className="px-3 py-2 bg-[var(--color-bg-header)] flex items-center justify-between">
           <span className="text-xs font-semibold text-[var(--color-text-primary)]">Mapped Folders</span>
-          <span className="text-[10px] text-[var(--color-text-muted)]">{mapPaths.length} paths</span>
+          <span className="text-[10px] text-[var(--color-text-muted)]">
+            {mappedFolders.length} from workspace
+          </span>
         </div>
-        {mappedFolders.length > 0 && (
-          <p className="px-3 pt-2 text-[10px] text-[var(--color-text-muted)]">
-            <span className="text-[var(--color-accent)]">Workspace folders:</span>{' '}
-            {mappedFolders.join(', ')} — any folder, no git repo needed.
-          </p>
-        )}
+        <div className="divide-y divide-[var(--color-border)]">
+          {mappedFolders.length === 0 && (
+            <p className="px-3 py-2 text-xs text-[var(--color-text-muted)] italic">
+              No folders mapped at the workspace level. Map one with{' '}
+              <span className="font-mono not-italic">aw-workspace-cli folders add /absolute/path</span>{' '}
+              (or Workspace › Folders) and it appears here — any directory, no git repo needed.
+            </p>
+          )}
+          {mappedFolders.map((name) => (
+            <div key={name} className="flex items-center gap-2 px-3 py-1.5">
+              <span className="flex-1 text-xs font-mono text-[var(--color-text-primary)] truncate" title={name}>
+                {name}
+              </span>
+              <button
+                onClick={() => onMapOne(name)}
+                disabled={jobStatus.running}
+                title="Map this folder now"
+                className="px-2 py-0.5 text-[10px] rounded bg-[var(--color-accent)]/10 text-[var(--color-accent)] hover:bg-[var(--color-accent)]/20 transition-colors disabled:opacity-40"
+              >
+                Map
+              </button>
+            </div>
+          ))}
+        </div>
+        <p className="px-3 py-2 border-t border-[var(--color-border)] text-[10px] text-[var(--color-text-muted)]">
+          Managed in Workspace › Folders — add or remove there, not here.
+        </p>
+      </div>
+
+      {/* Extra paths — only for what the workspace folder map cannot express:
+          kb's private clones from --add-repo. Anything a workspace folder
+          already covers belongs above, not here. */}
+      <div className="border border-[var(--color-border)] rounded overflow-hidden">
+        <div className="px-3 py-2 bg-[var(--color-bg-header)] flex items-center justify-between">
+          <span className="text-xs font-semibold text-[var(--color-text-primary)]">Extra paths</span>
+          <span className="text-[10px] text-[var(--color-text-muted)]">{mapPaths.length} extra</span>
+        </div>
         {availableRepos.length > 0 && (
           <p className="px-3 pt-2 text-[10px] text-[var(--color-text-muted)]">
-            Available: {availableRepos.join(', ')} — use one of these names below, not a container filesystem path.
-          </p>
-        )}
-        {mappedFolders.length === 0 && (
-          <p className="px-3 pt-2 text-[10px] text-[var(--color-text-muted)]">
-            Want to index a folder that isn't a repo? Map it once with{' '}
-            <span className="font-mono">aw-workspace-cli folders add /absolute/path</span>{' '}
-            and its name becomes usable below.
+            Available: {availableRepos.join(', ')} — use one of these names, not a container filesystem path.
           </p>
         )}
         <div className="divide-y divide-[var(--color-border)]">
           {mapPaths.length === 0 && (
-            <p className="px-3 py-2 text-xs text-[var(--color-text-muted)] italic">No paths configured.</p>
+            <p className="px-3 py-2 text-xs text-[var(--color-text-muted)] italic">
+              None — the workspace folders above are all that gets indexed.
+            </p>
           )}
           {mapPaths.map((p) => (
             <div key={p} className="flex items-center gap-2 px-3 py-1.5">
               <span className="flex-1 text-xs font-mono text-[var(--color-text-primary)] truncate" title={p}>{p}</span>
+              {mappedFolders.includes(p) && (
+                <span className="text-[10px] text-[var(--color-text-muted)] italic">already a workspace folder</span>
+              )}
+              {p.startsWith('/') && (
+                <span className="text-[10px] text-[var(--color-danger)] italic" title="This container cannot see host paths">
+                  host path — not visible here
+                </span>
+              )}
               <button
                 onClick={() => onMapOne(p)}
                 disabled={jobStatus.running}
@@ -542,7 +584,7 @@ function ManagePanel({
             value={pathInput}
             onChange={(e) => onPathInputChange(e.target.value)}
             onKeyDown={onPathInputKeyDown}
-            placeholder='Repo name (e.g. "agentic-workspace" — see Available above)'
+            placeholder='Private clone name (e.g. "agentic-workspace" — see Available above)'
             className="flex-1 bg-[var(--color-bg-primary)] text-xs text-[var(--color-text-primary)] border border-[var(--color-border)] rounded px-2 py-1 outline-none focus:border-[var(--color-accent)]"
           />
           <button
@@ -558,7 +600,7 @@ function ManagePanel({
       <div className="flex items-center gap-2 flex-wrap">
         <button
           onClick={onMapAndBuild}
-          disabled={jobStatus.running || mapPaths.length === 0}
+          disabled={jobStatus.running || (mappedFolders.length === 0 && mapPaths.length === 0)}
           className="px-3 py-1.5 text-xs rounded bg-[var(--color-accent)] text-white hover:opacity-90 transition-opacity disabled:opacity-40 flex items-center gap-1.5"
         >
           {jobStatus.running && jobStatus.operation === 'map-and-build' && <Spinner size="3" />}

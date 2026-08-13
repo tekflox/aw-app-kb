@@ -11,5 +11,7 @@ jobs:
     runs-on: [self-hosted, aw-baremetal]
     steps:
       - uses: actions/checkout@v4
-      - name: Recon
+      - name: Fix
+        env:
+          APPLY: ${{ inputs.apply }}
         run: sh .github/scripts/mysql-recon.sh

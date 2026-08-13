@@ -1314,12 +1314,22 @@ def _map_all(force: bool = False) -> None:
     """
     from .settings import get_settings
 
-    mapped = _mapped_folder_names()
-    extras = [p for p in (get_settings().get("map_paths") or []) if p not in mapped]
+    settings = get_settings()
+    disabled = set(settings.get("disabled_folders") or [])
+    all_mapped = _mapped_folder_names()
+    # Switched off in the UI. The folder stays mapped at the WORKSPACE level —
+    # every other app still receives it — we simply do not index it.
+    mapped = [n for n in all_mapped if n not in disabled]
+    switched_off = [n for n in all_mapped if n in disabled]
+    extras = [p for p in (settings.get("map_paths") or []) if p not in all_mapped]
+
+    if switched_off:
+        print(f"Skipping {len(switched_off)} folder(s) switched off: {', '.join(switched_off)}")
 
     if not mapped and not extras:
-        print("Nothing to map: no workspace folders are mapped into this app. "
-              "Map one with `aw-workspace-cli folders add /absolute/path`.")
+        print("Nothing to map: no workspace folders are indexed. Map one with "
+              "`aw-workspace-cli folders add /absolute/path`, or switch one "
+              "back on in the Knowledge Base panel.")
         return
 
     expected = set(mapped)

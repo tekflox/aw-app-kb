@@ -41,6 +41,10 @@ export default function App() {
   // apart from the repo list because they carry a different promise:
   // any directory at all, chosen deliberately, with no git repo behind it.
   const [mappedFolders, setMappedFolders] = useState([]);
+  // Workspace folders switched OFF for indexing. Opt-OUT, mirroring the
+  // backend: the workspace decides what EXISTS, this only records exceptions,
+  // so a folder mapped later is indexed without touching anything here.
+  const [disabledFolders, setDisabledFolders] = useState([]);
 
   const outputRef = useRef(null);
   const pollRef = useRef(null);
@@ -51,7 +55,10 @@ export default function App() {
 
   // Load KB settings on mount
   useEffect(() => {
-    kbGetSettings().then((s) => setMapPaths(s.map_paths || []));
+    kbGetSettings().then((s) => {
+      setMapPaths(s.map_paths || []);
+      setDisabledFolders(s.disabled_folders || []);
+    });
     kbGetDocCount().then((d) => setDocCount(d.count ?? 0));
     kbGetStatus().then(setJobStatus);
     kbListRepos().then((r) => setMappedFolders(r.folders || []));
@@ -159,6 +166,19 @@ export default function App() {
   const handleRemovePath = useCallback((path) => {
     setMapPaths((prev) => prev.filter((p) => p !== path));
   }, []);
+
+  const handleToggleFolder = useCallback(async (name, enabled) => {
+    const next = enabled
+      ? disabledFolders.filter((n) => n !== name)
+      : [...disabledFolders, name];
+    setDisabledFolders(next);
+    try {
+      await kbSaveSettings({ disabled_folders: next });
+    } catch {
+      setDisabledFolders(disabledFolders);   // put the switch back
+      showMessage(`Could not save: ${name} left unchanged`);
+    }
+  }, [disabledFolders]);
 
   const handleSaveSettings = useCallback(async () => {
     setSettingsSaving(true);
@@ -343,6 +363,8 @@ export default function App() {
             displayLines={displayLines}
             settingsSaving={settingsSaving}
             mappedFolders={mappedFolders}
+            disabledFolders={disabledFolders}
+            onToggleFolder={handleToggleFolder}
             onAddPath={handleAddPath}
             onRemovePath={handleRemovePath}
             onMapOne={handleMapOne}
@@ -448,6 +470,30 @@ const SPINNER_SIZES = {
   md: 'w-4 h-4',
 };
 
+function ToggleSwitch({ checked, onChange, disabled, label }) {
+  return (
+    <button
+      type="button"
+      role="switch"
+      aria-checked={checked}
+      aria-label={label}
+      disabled={disabled}
+      onClick={() => !disabled && onChange(!checked)}
+      title={label}
+      className={`relative inline-flex h-4 w-7 shrink-0 items-center rounded-full transition-colors ${
+        disabled ? 'bg-white/5 cursor-not-allowed'
+          : checked ? 'bg-[var(--color-accent)]' : 'bg-white/10 hover:bg-white/15'
+      }`}
+    >
+      <span
+        className={`inline-block h-3 w-3 transform rounded-full bg-white shadow transition-transform ${
+          checked ? 'translate-x-[14px]' : 'translate-x-0.5'
+        }`}
+      />
+    </button>
+  );
+}
+
 function Spinner({ size = 'sm' }) {
   return (
     <svg
@@ -467,7 +513,7 @@ function Spinner({ size = 'sm' }) {
 // ---------------------------------------------------------------------------
 function ManagePanel({
   mapPaths, pathInput, force, jobStatus, docCount, outputRef, displayLines,
-  settingsSaving, mappedFolders,
+  settingsSaving, mappedFolders, disabledFolders, onToggleFolder,
   onAddPath, onRemovePath, onMapOne, onMapAndBuild, onBuildOnly,
   onPathInputChange, onForceChange, onSaveSettings, onPathInputKeyDown,
 }) {
@@ -499,7 +545,8 @@ function ManagePanel({
         <div className="px-3 py-2 bg-[var(--color-bg-header)] flex items-center justify-between">
           <span className="text-xs font-semibold text-[var(--color-text-primary)]">Mapped Folders</span>
           <span className="text-[10px] text-[var(--color-text-muted)]">
-            {mappedFolders.length} from workspace
+            {mappedFolders.filter((n) => !disabledFolders.includes(n)).length}
+            {' of '}{mappedFolders.length} indexed
           </span>
         </div>
         <div className="divide-y divide-[var(--color-border)]">
@@ -510,24 +557,39 @@ function ManagePanel({
               (or Workspace › Folders) and it appears here — any directory, no git repo needed.
             </p>
           )}
-          {mappedFolders.map((name) => (
-            <div key={name} className="flex items-center gap-2 px-3 py-1.5">
-              <span className="flex-1 text-xs font-mono text-[var(--color-text-primary)] truncate" title={name}>
-                {name}
-              </span>
-              <button
-                onClick={() => onMapOne(name)}
-                disabled={jobStatus.running}
-                title="Map this folder now"
-                className="px-2 py-0.5 text-[10px] rounded bg-[var(--color-accent)]/10 text-[var(--color-accent)] hover:bg-[var(--color-accent)]/20 transition-colors disabled:opacity-40"
-              >
-                Map
-              </button>
-            </div>
-          ))}
+          {mappedFolders.map((name) => {
+            const enabled = !disabledFolders.includes(name);
+            return (
+              <div key={name} className="flex items-center gap-2 px-3 py-1.5">
+                <ToggleSwitch
+                  checked={enabled}
+                  onChange={(next) => onToggleFolder(name, next)}
+                  label={enabled ? `Stop indexing ${name}` : `Index ${name}`}
+                />
+                <span
+                  className={`flex-1 text-xs font-mono truncate ${
+                    enabled ? 'text-[var(--color-text-primary)]' : 'text-[var(--color-text-muted)] line-through'
+                  }`}
+                  title={name}
+                >
+                  {name}
+                </span>
+                <button
+                  onClick={() => onMapOne(name)}
+                  disabled={jobStatus.running || !enabled}
+                  title={enabled ? 'Map this folder now' : 'Switched off — not indexed'}
+                  className="px-2 py-0.5 text-[10px] rounded bg-[var(--color-accent)]/10 text-[var(--color-accent)] hover:bg-[var(--color-accent)]/20 transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
+                >
+                  Map
+                </button>
+              </div>
+            );
+          })}
         </div>
         <p className="px-3 py-2 border-t border-[var(--color-border)] text-[10px] text-[var(--color-text-muted)]">
-          Managed in Workspace › Folders — add or remove there, not here.
+          Managed in Workspace › Folders — add or remove there, not here. The switch
+          only controls indexing; switching one off drops its docs from the KB on
+          the next map.
         </p>
       </div>
 

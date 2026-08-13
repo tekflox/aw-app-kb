@@ -35,6 +35,11 @@ def get_settings() -> dict:
         data = {}
         fresh = True
     data.setdefault("map_paths", list(DEFAULT_MAP_PATHS) if fresh else [])
+    # Workspace folders the user switched OFF. Stored as an opt-OUT so the
+    # workspace stays the source of truth for what EXISTS: a folder mapped
+    # later is indexed by default, and this file only ever records the
+    # exceptions. An opt-in list would silently ignore new folders.
+    data.setdefault("disabled_folders", [])
     return data
 
 

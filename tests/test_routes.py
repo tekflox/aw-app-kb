@@ -128,7 +128,7 @@ def test_settings_roundtrip(tmp_path, monkeypatch):
         # A fresh install is seeded, so the KB indexes something useful
         # without anyone configuring it first.
         res = client.get("/api/kb/settings")
-        assert res.json() == {"map_paths": DEFAULT_MAP_PATHS}
+        assert res.json() == {"map_paths": DEFAULT_MAP_PATHS, "disabled_folders": []}
 
         res = client.put("/api/kb/settings", json={"map_paths": [".", "repos/foo"]})
         assert res.json()["map_paths"] == [".", "repos/foo"]
@@ -236,3 +236,41 @@ def test_translated_host_path_keeps_the_users_name(tmp_path, monkeypatch):
 
     assert repo_name == "repos"
     assert repo_dir == str(mount)
+
+
+def test_disabled_folders_are_skipped_and_pruned(tmp_path, monkeypatch, capsys):
+    """A folder switched off is not indexed, and its existing output goes.
+
+    Opt-OUT on purpose: the workspace owns what EXISTS, so a folder mapped
+    later must be indexed without anyone editing this list.
+    """
+    import importlib
+    monkeypatch.setenv("KB_DATA_DIR", str(tmp_path))
+    monkeypatch.setenv("KB_DIR_OVERRIDE", str(tmp_path / "out"))
+    folders = tmp_path / "workspace-folders"
+    for name in ("docs", "skills"):
+        (folders / name).mkdir(parents=True)
+        (folders / name / "a.md").write_text("# " + name + "\n\nbody text here\n")
+
+    from kb_app import settings as settings_mod
+    from kb_app import kb_ops
+    importlib.reload(settings_mod)
+    importlib.reload(kb_ops)
+    monkeypatch.setattr(kb_ops, "MAPPED_FOLDERS_DIR", str(folders))
+
+    # Both on: both indexed.
+    settings_mod.save_settings({"map_paths": [], "disabled_folders": []})
+    kb_ops._map_all()
+    out = tmp_path / "out" / "mapped_folders"
+    assert sorted(p.name for p in out.iterdir()) == ["docs", "skills"]
+
+    # Switch one off: it stops being indexed AND its output is pruned.
+    settings_mod.save_settings({"disabled_folders": ["skills"]})
+    kb_ops._map_all()
+    assert sorted(p.name for p in out.iterdir()) == ["docs"]
+    assert "switched off: skills" in capsys.readouterr().out
+
+    # Back on: it returns.
+    settings_mod.save_settings({"disabled_folders": []})
+    kb_ops._map_all()
+    assert sorted(p.name for p in out.iterdir()) == ["docs", "skills"]

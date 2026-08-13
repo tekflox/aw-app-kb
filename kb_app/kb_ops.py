@@ -968,6 +968,42 @@ def _available_repo_names():
     return sorted(names)
 
 
+#: Where the workspace lives on the HOST. Paths the user types come from
+#: there (it is what the workspace UI, the CLI and every terminal show), but
+#: this container has its own filesystem, so such a path is meaningless here
+#: unless translated — see _translate_host_path.
+WORKSPACE_HOST_DIR = os.environ.get("AW_WORKSPACE_CONTAINER_DIR", "/opt/aw-workspace")
+
+
+def _translate_host_path(path):
+    """Rewrite a workspace HOST path to where that same directory is mounted
+    in this container; return it unchanged if we have no mount for it.
+
+    ``/opt/aw-workspace/repos`` is a real, obvious thing to type — it is the
+    path the workspace shows everywhere — and it resolves to nothing in here,
+    so it used to fail as "Repo not found" with a list of names that did not
+    explain why. Two of the workspace's directories ARE mounted (see
+    aw-app.json's volumes), so for those the translation is exact:
+
+        <workspace>/repos/...  ->  SHARED_REPOS_DIR/...   ($AW_WORKSPACE_REPOS)
+
+    Mapped folders are deliberately NOT translated by host path: they are
+    addressed by the NAME the workspace registered them under, which is the
+    single source of truth for them (`--map-all`), and a folder can point at
+    any host path at all — including one outside the workspace.
+    """
+    for host_root, container_root in ((os.path.join(WORKSPACE_HOST_DIR, "repos"),
+                                       SHARED_REPOS_DIR),):
+        if path == host_root or path.startswith(host_root + os.sep):
+            translated = os.path.join(container_root, os.path.relpath(path, host_root)) \
+                if path != host_root else container_root
+            translated = os.path.normpath(translated)
+            if os.path.isdir(translated):
+                print(f"Resolving host path {path} -> {translated} (mounted here)")
+                return translated
+    return path
+
+
 def _resolve_map_target(target):
     """Resolve a --map-path argument to (repo_dir, repo_name, extra_skips).
 
@@ -994,8 +1030,8 @@ def _resolve_map_target(target):
     )
 
     if looks_like_path:
-        repo_dir = os.path.abspath(target)
-        repo_name = os.path.basename(repo_dir) or "root"
+        repo_dir = _translate_host_path(os.path.abspath(target))
+        repo_name = os.path.basename(repo_dir.rstrip(os.sep)) or "root"
     elif os.path.isdir(os.path.join(MAPPED_FOLDERS_DIR, target)):
         repo_dir = os.path.join(MAPPED_FOLDERS_DIR, target)
         repo_name = target
@@ -1246,7 +1282,10 @@ def _map_all(force: bool = False) -> None:
             _map_repo(name, force=force)
 
     for p in extras:
-        if os.path.isabs(p) and not os.path.isdir(p):
+        # _translate_host_path already covers the workspace dirs we DO have
+        # mounted; anything absolute still unresolved after it genuinely is
+        # not visible from in here, and saying so beats "Repo not found".
+        if os.path.isabs(p) and not os.path.isdir(_translate_host_path(os.path.abspath(p))):
             print(f"Skipping {p!r}: an absolute host path this container cannot see. "
                   f"Map it at the workspace level instead and it will be picked "
                   f"up here automatically.")

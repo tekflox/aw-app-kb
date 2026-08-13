@@ -14,14 +14,27 @@ import os
 DATA_DIR = os.environ.get("KB_DATA_DIR", "/app/data")
 SETTINGS_PATH = os.path.join(DATA_DIR, "settings.json")
 
+#: Seeded on a FRESH install only (no settings file yet). The workspace's
+#: repos/ dir is the one thing worth indexing that the workspace folder map
+#: does not already cover, and it is mounted here as $AW_WORKSPACE_REPOS, so
+#: a new workspace gets a useful KB without anyone configuring anything.
+#:
+#: Only a default: once the file exists this is never re-applied, so removing
+#: the entry in the UI sticks.
+DEFAULT_MAP_PATHS = [
+    os.path.join(os.environ.get("AW_WORKSPACE_CONTAINER_DIR", "/opt/aw-workspace"), "repos"),
+]
+
 
 def get_settings() -> dict:
+    fresh = False
     try:
         with open(SETTINGS_PATH) as f:
             data = json.load(f)
     except (FileNotFoundError, json.JSONDecodeError):
         data = {}
-    data.setdefault("map_paths", [])
+        fresh = True
+    data.setdefault("map_paths", list(DEFAULT_MAP_PATHS) if fresh else [])
     return data
 
 

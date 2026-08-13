@@ -36,10 +36,9 @@ export default function App() {
   const [docCount, setDocCount] = useState(null);
   const [pathInput, setPathInput] = useState('');
   const [settingsSaving, setSettingsSaving] = useState(false);
-  const [availableRepos, setAvailableRepos] = useState([]);
   // Folders the user mapped at the WORKSPACE level (/api/folders), handed
   // to this container through the $AW_WORKSPACE_FOLDERS mount. Tracked
-  // apart from availableRepos because they carry a different promise:
+  // apart from the repo list because they carry a different promise:
   // any directory at all, chosen deliberately, with no git repo behind it.
   const [mappedFolders, setMappedFolders] = useState([]);
 
@@ -55,10 +54,7 @@ export default function App() {
     kbGetSettings().then((s) => setMapPaths(s.map_paths || []));
     kbGetDocCount().then((d) => setDocCount(d.count ?? 0));
     kbGetStatus().then(setJobStatus);
-    kbListRepos().then((r) => {
-      setAvailableRepos(r.repos || []);
-      setMappedFolders(r.folders || []);
-    });
+    kbListRepos().then((r) => setMappedFolders(r.folders || []));
   }, []);
 
   // Polling for job status
@@ -76,10 +72,7 @@ export default function App() {
           // Cover add-repo jobs finishing (Mapped Folders bare names resolve
           // against this list — stale list = the exact "path not found"
           // confusion this was built to prevent).
-          kbListRepos().then((r) => {
-      setAvailableRepos(r.repos || []);
-      setMappedFolders(r.folders || []);
-    });
+          kbListRepos().then((r) => setMappedFolders(r.folders || []));
         }
       } catch {}
     };
@@ -329,8 +322,8 @@ export default function App() {
           <span>{files.length} files</span>
           {docCount !== null && <span>· {docCount} indexed</span>}
           {jobStatus.running && (
-            <span className="flex items-center gap-1 text-[var(--color-accent)]">
-              <Spinner size="2.5" />
+            <span className="flex items-center gap-1 whitespace-nowrap text-[var(--color-accent)]">
+              <Spinner size="sm" />
               {jobStatus.operation}
             </span>
           )}
@@ -349,7 +342,6 @@ export default function App() {
             outputRef={outputRef}
             displayLines={displayLines}
             settingsSaving={settingsSaving}
-            availableRepos={availableRepos}
             mappedFolders={mappedFolders}
             onAddPath={handleAddPath}
             onRemovePath={handleRemovePath}
@@ -447,10 +439,19 @@ export default function App() {
 // ---------------------------------------------------------------------------
 // Spinner
 // ---------------------------------------------------------------------------
-function Spinner({ size = '3' }) {
+// Sizes must be LITERAL class names. `w-${size}` is invisible to Tailwind's
+// scanner, so `w-3`/`w-2.5` were never emitted into the CSS and the svg fell
+// back to its intrinsic size — a spinner as tall as the panel, which then
+// squeezed the label beside it into a three-line wrap.
+const SPINNER_SIZES = {
+  sm: 'w-3 h-3',
+  md: 'w-4 h-4',
+};
+
+function Spinner({ size = 'sm' }) {
   return (
     <svg
-      className={`w-${size} h-${size} animate-spin`}
+      className={`${SPINNER_SIZES[size] || SPINNER_SIZES.sm} shrink-0 animate-spin`}
       viewBox="0 0 24 24"
       fill="none"
       stroke="currentColor"
@@ -466,7 +467,7 @@ function Spinner({ size = '3' }) {
 // ---------------------------------------------------------------------------
 function ManagePanel({
   mapPaths, pathInput, force, jobStatus, docCount, outputRef, displayLines,
-  settingsSaving, availableRepos, mappedFolders,
+  settingsSaving, mappedFolders,
   onAddPath, onRemovePath, onMapOne, onMapAndBuild, onBuildOnly,
   onPathInputChange, onForceChange, onSaveSettings, onPathInputKeyDown,
 }) {
@@ -538,11 +539,6 @@ function ManagePanel({
           <span className="text-xs font-semibold text-[var(--color-text-primary)]">Extra paths</span>
           <span className="text-[10px] text-[var(--color-text-muted)]">{mapPaths.length} extra</span>
         </div>
-        {availableRepos.length > 0 && (
-          <p className="px-3 pt-2 text-[10px] text-[var(--color-text-muted)]">
-            Available: {availableRepos.join(', ')} — use one of these names, not a container filesystem path.
-          </p>
-        )}
         <div className="divide-y divide-[var(--color-border)]">
           {mapPaths.length === 0 && (
             <p className="px-3 py-2 text-xs text-[var(--color-text-muted)] italic">
@@ -554,11 +550,6 @@ function ManagePanel({
               <span className="flex-1 text-xs font-mono text-[var(--color-text-primary)] truncate" title={p}>{p}</span>
               {mappedFolders.includes(p) && (
                 <span className="text-[10px] text-[var(--color-text-muted)] italic">already a workspace folder</span>
-              )}
-              {p.startsWith('/') && (
-                <span className="text-[10px] text-[var(--color-danger)] italic" title="This container cannot see host paths">
-                  host path — not visible here
-                </span>
               )}
               <button
                 onClick={() => onMapOne(p)}
@@ -584,7 +575,7 @@ function ManagePanel({
             value={pathInput}
             onChange={(e) => onPathInputChange(e.target.value)}
             onKeyDown={onPathInputKeyDown}
-            placeholder='Private clone name (e.g. "agentic-workspace" — see Available above)'
+            placeholder='Path or repo name to also index (e.g. /opt/aw-workspace/repos)'
             className="flex-1 bg-[var(--color-bg-primary)] text-xs text-[var(--color-text-primary)] border border-[var(--color-border)] rounded px-2 py-1 outline-none focus:border-[var(--color-accent)]"
           />
           <button
@@ -603,7 +594,7 @@ function ManagePanel({
           disabled={jobStatus.running || (mappedFolders.length === 0 && mapPaths.length === 0)}
           className="px-3 py-1.5 text-xs rounded bg-[var(--color-accent)] text-white hover:opacity-90 transition-opacity disabled:opacity-40 flex items-center gap-1.5"
         >
-          {jobStatus.running && jobStatus.operation === 'map-and-build' && <Spinner size="3" />}
+          {jobStatus.running && jobStatus.operation === 'map-and-build' && <Spinner size="sm" />}
           Map All + Build
         </button>
         <button
@@ -611,7 +602,7 @@ function ManagePanel({
           disabled={jobStatus.running}
           className="px-3 py-1.5 text-xs rounded bg-[var(--color-bg-header)] border border-[var(--color-border)] text-[var(--color-text-primary)] hover:bg-white/10 transition-colors disabled:opacity-40 flex items-center gap-1.5"
         >
-          {jobStatus.running && jobStatus.operation === 'build' && <Spinner size="3" />}
+          {jobStatus.running && jobStatus.operation === 'build' && <Spinner size="sm" />}
           Build Only
         </button>
         <label className="flex items-center gap-1.5 text-xs text-[var(--color-text-muted)] cursor-pointer select-none ml-auto">
@@ -642,8 +633,8 @@ function ManagePanel({
         <div className="px-3 py-2 bg-[var(--color-bg-header)] flex items-center gap-2">
           <span className="text-xs font-semibold text-[var(--color-text-primary)]">Status</span>
           {jobStatus.running && (
-            <span className="flex items-center gap-1 text-[10px] text-[var(--color-accent)]">
-              <Spinner size="2.5" />
+            <span className="flex items-center gap-1 whitespace-nowrap text-[10px] text-[var(--color-accent)]">
+              <Spinner size="sm" />
               {jobStatus.operation}
             </span>
           )}

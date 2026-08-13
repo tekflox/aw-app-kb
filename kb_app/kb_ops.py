@@ -985,6 +985,9 @@ def _available_repo_names():
 #: unless translated — see _translate_host_path.
 WORKSPACE_HOST_DIR = os.environ.get("AW_WORKSPACE_CONTAINER_DIR", "/opt/aw-workspace")
 
+#: Host paths already reported as translated, so we say it once per run.
+_REPORTED_TRANSLATIONS = set()
+
 
 def _translate_host_path(path):
     """Rewrite a workspace HOST path to where that same directory is mounted
@@ -1010,7 +1013,12 @@ def _translate_host_path(path):
                 if path != host_root else container_root
             translated = os.path.normpath(translated)
             if os.path.isdir(translated):
-                print(f"Resolving host path {path} -> {translated} (mounted here)")
+                # Reported once per path: resolution is also consulted to work
+                # out output names, so an unconditional print says the same
+                # thing two or three times per run.
+                if path not in _REPORTED_TRANSLATIONS:
+                    _REPORTED_TRANSLATIONS.add(path)
+                    print(f"Resolving host path {path} -> {translated} (mounted here)")
                 return translated
     return path
 
@@ -1293,6 +1301,9 @@ def _map_all(force: bool = False) -> None:
     are NOT workspace folders — kb's own private clones from ``--add-repo``.
     Entries that duplicate a mapped folder are skipped rather than mapped
     twice, and absolute paths in it are reported instead of failing silently.
+
+    This is a **sync**, not an append: output for a source that is no longer
+    mapped is deleted — see ``_prune_unmapped_output``.
     """
     from .settings import get_settings
 
@@ -1304,12 +1315,14 @@ def _map_all(force: bool = False) -> None:
               "Map one with `aw-workspace-cli folders add /absolute/path`.")
         return
 
+    expected = set(mapped)
     if mapped:
         print(f"Mapping {len(mapped)} workspace folder(s): {', '.join(mapped)}")
         for name in mapped:
             _map_repo(name, force=force)
 
     for p in extras:
+        expected.add(_mapped_output_name(p))
         # _translate_host_path already covers the workspace dirs we DO have
         # mounted; anything absolute still unresolved after it genuinely is
         # not visible from in here, and saying so beats "Repo not found".
@@ -1320,6 +1333,56 @@ def _map_all(force: bool = False) -> None:
             continue
         print(f"Mapping extra path from settings: {p}")
         _map_repo(p, force=force)
+
+    _prune_unmapped_output(expected)
+
+
+def _mapped_output_name(target):
+    """The ``mapped_folders/<name>`` dir ``target`` maps into.
+
+    Mirrors _resolve_map_target's naming so the prune below compares like
+    with like: a path is named after its basename, a bare name after itself.
+    """
+    _, repo_name, _ = _resolve_map_target(target)
+    return repo_name
+
+
+def _prune_unmapped_output(expected):
+    """Delete mapped output for sources that are no longer mapped.
+
+    ``--map-all`` is a sync, not an append. Without this, unmapping a folder
+    (or renaming it, which is an unmap plus a map) left its whole generated
+    tree behind: it kept showing in the KB's sidebar and kept answering
+    searches, so the KB claimed to know about folders that no longer exist —
+    e.g. `aw-docs`, `agentic-workspace` and `evidencia` all still listed after
+    the 2026-08-13 rename.
+
+    Only ``mapped_folders/`` is touched. Documents the user wrote themselves
+    live elsewhere under KB_DIR and are never generated output, so they are
+    not ours to delete.
+
+    The stale rows in pgvector are cleaned by the following ``--build``,
+    which already deletes any indexed doc whose file has disappeared.
+    """
+    import shutil
+
+    root = os.path.join(KB_DIR, "mapped_folders")
+    if not os.path.isdir(root):
+        return
+
+    stale = sorted(
+        name for name in os.listdir(root)
+        if os.path.isdir(os.path.join(root, name)) and name not in expected
+    )
+    if not stale:
+        return
+
+    print(f"\nPruning {len(stale)} unmapped folder(s): {', '.join(stale)}")
+    for name in stale:
+        try:
+            shutil.rmtree(os.path.join(root, name))
+        except OSError as e:
+            print(f"  could not remove {name}: {e}")
 
 
 def run(args=None):

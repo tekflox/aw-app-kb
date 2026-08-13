@@ -10,57 +10,36 @@ jobs:
   clean:
     runs-on: [self-hosted, aw-baremetal]
     steps:
+      - uses: actions/checkout@v4
       - name: Clean
+        env:
+          APPLY: ${{ inputs.apply }}
         run: |
           set +e
-          APPLY="${{ inputs.apply }}"
           echo "=== BEFORE ==="; df -h / | tail -1
-
-          # --- 1. docker build cache (docker group, no root needed) ---
-          echo "### docker build cache"
           docker system df | sed -n '1p;5p'
-          [ "$APPLY" = "true" ] && docker builder prune -a -f 2>&1 | tail -2
 
-          # --- 2. gh-runners _work/_diag, idle runners only ---
-          # NEVER the runner this job is executing on: its _work holds our own
-          # checkout, and deleting it kills this very run.
-          echo "### gh-runners"
+          echo "### docker build cache"
+          if [ "$APPLY" = "true" ]; then docker builder prune -a -f 2>&1 | tail -2; fi
+
+          echo "### gh-runners (idle only, never this job's own runner)"
           SELF=$(echo "$GITHUB_WORKSPACE" | cut -d/ -f5)
           echo "self=$SELF"
           for d in /home/ubuntu/gh-runners/*/; do
             n=$(basename "$d")
-            [ "$n" = "$SELF" ] && { echo "  skip $n (this job)"; continue; }
-            if ps -eo args | grep "[R]unner.Worker" | grep -q "$n"; then
-              echo "  skip $n (busy)"; continue
-            fi
+            if [ "$n" = "$SELF" ]; then echo "  skip $n (this job)"; continue; fi
+            if ps -eo args | grep "[R]unner.Worker" | grep -q "$n"; then echo "  skip $n (busy)"; continue; fi
             sz=$(du -sh "$d/_work" 2>/dev/null | cut -f1)
             if [ "$APPLY" = "true" ]; then
               rm -rf "$d"/_work/* 2>/dev/null
-              find "$d/_diag" -type f -name "*.log" -delete 2>/dev/null
+              find "$d/_diag" -type f -name '*.log' -delete 2>/dev/null
             fi
             echo "  cleaned $n (_work was $sz)"
           done
 
-          # --- 3. root-level: /var/log + waydroid, via a container ---
-          # No passwordless sudo here, but membership of the docker group is
-          # root on the host by construction; this is the only route.
-          echo "### root-level (via container)"
+          echo "### root-level via container"
           if [ "$APPLY" = "true" ]; then
-            docker run --rm --privileged -v /:/host alpine sh -s <<'INNER'
-              set +e
-              echo "-- /var/log before: $(du -sh /host/var/log 2>/dev/null | cut -f1)"
-              find /host/var/log -type f \( -name '*.1' -o -name '*.gz' -o -name '*.old' -o -name '*.[0-9]' \) -delete
-              find /host/var/log/journal -type f -name '*@*.journal' -delete
-              : > /host/var/log/syslog
-              : > /host/var/log/kern.log
-              echo "-- /var/log after:  $(du -sh /host/var/log 2>/dev/null | cut -f1)"
-
-              echo "-- waydroid data: $(du -sh /host/var/lib/waydroid 2>/dev/null | cut -f1)"
-              rm -rf /host/var/lib/waydroid /host/etc/waydroid* /host/usr/share/waydroid* /host/home/ubuntu/.local/share/waydroid
-              echo "-- waydroid apt purge:"
-              chroot /host /bin/bash -c "apt-mark unhold waydroid >/dev/null 2>&1; DEBIAN_FRONTEND=noninteractive apt-get purge -y waydroid 2>&1 | tail -4; apt-get autoremove -y 2>&1 | tail -2"
-              echo "-- waydroid binary still there? "; ls /host/usr/bin/waydroid 2>/dev/null || echo "gone"
-INNER
+            docker run --rm --privileged -v /:/host -v "$PWD/.github/scripts:/s:ro" alpine sh /s/disk-clean-root.sh
           fi
 
           echo "=== AFTER ==="; df -h / | tail -1

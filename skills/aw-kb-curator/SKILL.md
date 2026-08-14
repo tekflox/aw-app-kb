@@ -154,12 +154,12 @@ place this repo's own built-in skills live, where Claude Code auto-discovers
 
 ### Cross-check against agents-platform, if installed
 
-**Skip if** no `agents_platform__*` MCP tools are available in this session
+**Skip if** no `aw__agents_platform_runners__*` MCP tools are available in this session
 (the `agents-platform-runners` app isn't installed/configured here).
 
 ```
-mcp__aw-gateway__agents_platform__list_retro_scores
-mcp__aw-gateway__agents_platform__list_agents
+aw__agents_platform_runners__list_retro_scores
+aw__agents_platform_runners__list_agents
 ```
 
 For each live skill:
@@ -204,7 +204,7 @@ grep -n "search_knowledge_base\|KB" <that file> | head -20
 **b) agents-platform agents**, if installed (see Part 3's skip condition):
 
 ```
-mcp__aw-gateway__agents_platform__list_agents
+aw__agents_platform_runners__list_agents
 ```
 
 Check each agent's `system_prompt` for `search_knowledge_base`.
@@ -213,11 +213,18 @@ Check each agent's `system_prompt` for `search_knowledge_base`.
 
 ```bash
 for f in /opt/aw-workspace/skills/*/SKILL.md; do
-  grep -l "search_knowledge_base\|aw-knowledge-base" "$f" || echo "MISSING: $f"
+  grep -lq "search_knowledge_base" "$f" || echo "MISSING KB: $f"
 done
+
+# Dead tool names. A skill naming one teaches an agent a lookup that fails,
+# and an agent that concludes a tool is missing usually stops instead of
+# asking. `aw-knowledge-base` and `agent-mcp` are pre-gateway spellings.
+grep -rln "aw-knowledge-base\|mcp__agent-mcp__\|agents_platform__<tool>" \
+     /opt/aw-workspace/skills/*/SKILL.md
 ```
 
-Flag any agent/skill whose instructions **do not** mention the KB.
+Flag any agent/skill whose instructions **do not** mention the KB, and any
+that still name a dead tool namespace.
 
 ### 4.2 — Analyze agent run histories for missed skills
 
@@ -232,8 +239,8 @@ never loaded. Signals:
   was never read
 
 ```
-mcp__aw-gateway__agents_platform__list_target_runs(target_slug=<slug>, limit=10)
-mcp__aw-gateway__agents_platform__peek_run_output(run_id=<id>)
+aw__agents_platform_runners__list_target_runs(target_slug=<slug>, limit=10)
+aw__agents_platform_runners__peek_run_output(run_id=<id>)
 ```
 
 ### 4.3 — Verify KB entries are positioned for discoverability
@@ -296,10 +303,10 @@ specific mechanism exists; ask if none is obvious.
 | `mcp__aw-gateway__aw_knowledge_base__search_knowledge_base` | Verify a topic exists before flagging as gap |
 | `mcp__aw-gateway__aw_knowledge_base__update_knowledge_base` | Create or update a KB doc |
 | `mcp__aw-gateway__aw_knowledge_base__delete_knowledge_base` | Remove stale/orphaned KB doc |
-| `mcp__aw-gateway__agents_platform__list_retro_scores` | Fetch retro scores for all agents (if installed) |
-| `mcp__aw-gateway__agents_platform__list_agents` | Full agent list for cross-check (if installed) |
-| `mcp__aw-gateway__agents_platform__list_target_runs` | Check run recency for an agent's target (if installed) |
-| `mcp__aw-gateway__agents_platform__peek_run_output` | Inspect run output for missed-skill patterns (if installed) |
+| `aw__agents_platform_runners__list_retro_scores` | Fetch retro scores for all agents (if installed) |
+| `aw__agents_platform_runners__list_agents` | Full agent list for cross-check (if installed) |
+| `aw__agents_platform_runners__list_target_runs` | Check run recency for an agent's target (if installed) |
+| `aw__agents_platform_runners__peek_run_output` | Inspect run output for missed-skill patterns (if installed) |
 | `mcp__aw-gateway__aw_presentation__create_presentation` | Visual audit report (if installed) |
 
 `search_skills` / `load_skill` are listed in this app's own `contributes.mcp`

@@ -101,17 +101,27 @@ export default function App() {
     setTimeout(() => setMessage(''), 3000);
   };
 
+  // Opening a hit must NOT throw the result list away. It used to clear both
+  // result sets here, so every click cost you the search: you read one hit,
+  // then had to retype the query to reach the second. The sidebar keeps the
+  // results (with the open one highlighted) until you explicitly go Back.
   const openFile = useCallback(async (path) => {
     const res = await kbReadFile(path);
     if (res.success) {
       setSelectedFile(path);
       setContent(res.content);
       setOriginalContent(res.content);
-      setSearchResults(null);
-      setMcpResults(null);
       setViewMode('preview');
       setShowManage(false);
     }
+  }, []);
+
+  // Leave the result list and return the sidebar to the file tree. The query
+  // stays in the box on purpose — Back is navigation, not a reset, so Enter
+  // re-runs the same search.
+  const backToTree = useCallback(() => {
+    setSearchResults(null);
+    setMcpResults(null);
   }, []);
 
   const handleSave = useCallback(async () => {
@@ -272,10 +282,18 @@ export default function App() {
               className={`px-2 py-0.5 text-[10px] rounded ${searchMode === 'semantic' ? 'bg-[var(--color-accent)]/20 text-[var(--color-accent)]' : 'text-[var(--color-text-muted)] hover:text-[var(--color-text-primary)]'}`}>
               Semantic
             </button>
+            {/* Back, not Clear: what the button actually does is leave the
+                result list and return to the file tree. Sits apart from the
+                Files/Semantic mode pair (ml-auto) and carries an arrow, so it
+                reads as navigation rather than a third search mode. */}
             {(searchResults || mcpResults) && (
-              <button onClick={() => { setSearchResults(null); setMcpResults(null); setSearchQuery(''); }}
-                className="px-2 py-0.5 text-[10px] text-[var(--color-text-muted)] hover:text-[var(--color-text-primary)]">
-                Clear
+              <button onClick={backToTree}
+                title="Back to the file tree"
+                className="ml-auto flex items-center gap-1 px-2 py-0.5 text-[10px] rounded border border-[var(--color-border)] text-[var(--color-text-muted)] hover:text-[var(--color-text-primary)] hover:bg-white/5 hover:border-[var(--color-accent)] transition-colors">
+                <svg className="w-2.5 h-2.5 shrink-0" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
+                  <path d="M19 12H5" /><path d="M12 19l-7-7 7-7" />
+                </svg>
+                Back
               </button>
             )}
           </div>
@@ -311,16 +329,21 @@ export default function App() {
               <div className="px-2 py-1 text-[10px] uppercase text-[var(--color-text-muted)]">
                 {mcpResults.length} semantic results
               </div>
-              {mcpResults.map((r, i) => (
-                <button key={i} onClick={() => openFile(r.id || `${r.metadata?.repo || ''}/${r.metadata?.path || ''}`)}
-                  className="w-full text-left px-2 py-1.5 rounded hover:bg-white/5">
+              {mcpResults.map((r, i) => {
+                // One expression for both the click target and the highlight —
+                // computing it twice is how they drift apart.
+                const path = r.id || `${r.metadata?.repo || ''}/${r.metadata?.path || ''}`;
+                return (
+                <button key={i} onClick={() => openFile(path)}
+                  className={`w-full text-left px-2 py-1.5 rounded hover:bg-white/5 ${selectedFile === path ? 'bg-white/10' : ''}`}>
                   <div className="flex items-center justify-between">
                     <span className="text-[var(--color-text-primary)] truncate">{r.id || r.metadata?.path || 'Unknown'}</span>
                     <span className="text-[10px] text-[var(--color-accent)] shrink-0 ml-1">{(r.score * 100).toFixed(0)}%</span>
                   </div>
                   {r.content && <div className="text-[10px] text-[var(--color-text-muted)] mt-0.5 line-clamp-2">{r.content.slice(0, 150)}</div>}
                 </button>
-              ))}
+                );
+              })}
             </div>
           ) : (
             <FileTree

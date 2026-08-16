@@ -252,17 +252,17 @@ For each new/recently-edited KB entry (from Part 1):
 3. Rewrite the KB entry with better trigger vocabulary: include the exact
    phrases agents would search for
 
-### 4.4 — A known, unresolved gap in this app's own MCP surface
+### 4.4 — `search_skills`/`load_skill` mount (fixed 2026-08-13, v0.18.0)
 
 The `kb` app's own `search_skills`/`load_skill` MCP tools read from
-`KB_SKILLS_DIR` (default `/app/skills`) **inside the container** — but this
-app's manifest (`aw-app-kb/aw-app.json`) has no volume mounting the
-workspace's real `/opt/aw-workspace/skills/` there. As shipped, those two
-tools cannot see any live skill regardless of where it's registered. Don't
-rely on them for this audit (use the `GET /api/apps/-/skills` + direct file
-read approach in Part 3 instead) and flag this as a standing bug for
-whoever owns `aw-app-kb` next — fixing it needs a manifest volume entry, not
-a skill-content change.
+`KB_SKILLS_DIR` (default `/app/skills`) **inside the container**. This used
+to be unmounted — no volume in `aw-app-kb/aw-app.json` pointed it at the
+workspace's real `/opt/aw-workspace/skills/`, so those two tools couldn't
+see any live skill regardless of where it was registered. Fixed in
+`aw-app-kb` v0.18.0 (`$AW_WORKSPACE_SKILLS` → `/app/skills`, ro) — confirm
+the mount is still present in the manifest before relying on this being
+current; if a future release drops it, re-flag as a regression using the
+same wording this section used to carry.
 
 ### 4.5 — Actions
 
@@ -271,7 +271,7 @@ a skill-content change.
 | Agent/skill missing KB instruction | Propose adding `search_knowledge_base` guidance — flag for the workspace owner's approval before editing anything shared |
 | Missed skill in run history | Add a KB entry under `memory/<skill-name>-trigger-patterns.md` mapping the user's natural-language phrasing to the skill |
 | KB entry not discoverable | Rewrite via `update_knowledge_base` with richer keyword coverage |
-| `search_skills`/`load_skill` still unmounted | Re-flag 4.4's gap; don't attempt to fix the manifest without sign-off, it changes what's exposed inside a running container |
+| `search_skills`/`load_skill` unmounted again | Check the manifest for the `$AW_WORKSPACE_SKILLS` volume from 4.4; if it's gone, flag as a regression — don't fix the manifest without sign-off, it changes what's exposed inside a running container |
 
 ---
 

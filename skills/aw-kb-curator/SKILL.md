@@ -290,6 +290,29 @@ KB Reachability:    N agents/skills checked, X missing KB instruction, Y missed-
 Use `mcp__aw-gateway__aw_presentation__create_presentation` to render a
 visual report when running interactively, if that MCP tool is available.
 
+### Mandatory: send the summary to Telegram
+
+Producing the report is not the same as delivering it — when this runs
+unattended (a scheduled task, no human watching), the summary above is
+worthless unless it actually reaches Frederico. Nothing else in this skill
+notifies anyone. Always run this as the last step, even on a clean run
+with zero actions taken:
+
+```bash
+curl -s -m 15 -X POST http://172.18.0.1:10014/api/telegram/report \
+  -H 'Content-Type: application/json' \
+  -d "$(python3 -c '
+import json, sys
+print(json.dumps({"title": sys.argv[1], "text": sys.argv[2]}))
+' "kb-curator — $(date +%Y-%m-%d)" "$YOUR_SUMMARY_TEXT")"
+```
+
+`172.18.0.1:10014` is the same Agents Platform address used by
+`aw-app-tasks`'s own `agents_platform_base` config (the bridge gateway —
+see the aw-system-analyst skill for the same pattern). If the curl fails,
+say so explicitly in your final output rather than silently retrying —
+a failed notification is itself worth knowing about.
+
 All proposed destructive actions (delete/merge) should go through whatever
 approval channel this workspace uses before executing — don't assume a
 specific mechanism exists; ask if none is obvious.

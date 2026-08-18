@@ -91,3 +91,59 @@ export async function kbSaveSettings(settings) {
 export async function kbListRepos() {
   return json('api/kb/repos');
 }
+
+// --- Core workspace API (NOT this app's own /api/kb/* surface) ------------
+//
+// Folder mapping is a WORKSPACE-level primitive (Workspace › Folders /
+// `aw-workspace-cli folders add`), not something this app owns — this app
+// just happens to be the only one that mounts $AW_WORKSPACE_FOLDERS today,
+// which is why its CRUD UI now lives here instead of in core nav. These
+// three calls hit core directly with an ABSOLUTE path (every other helper
+// above is deliberately relative, so it survives being proxied under
+// /api/apps/kb/) because /api/folders lives on core, not in this app's own
+// mount — a relative path would resolve to api/apps/kb/api/folders instead.
+//
+// Mapping or unmapping a folder makes core recreate every container that
+// declares $AW_WORKSPACE_FOLDERS — including this one. The tab loses its
+// connection to THIS iframe for a few seconds right after a successful
+// add/remove; callers must expect that and retry (see reloadFoldersAfterRestart
+// in App.jsx), not treat the drop as a failure.
+
+export async function coreListFolders() {
+  const res = await fetch('/api/folders', { credentials: 'include' });
+  if (!res.ok) throw new Error(`HTTP ${res.status}`);
+  return res.json();
+}
+
+export async function coreBrowseFolders(path) {
+  const q = path ? `?path=${encodeURIComponent(path)}` : '';
+  const res = await fetch(`/api/folders/-/browse${q}`, { credentials: 'include' });
+  const d = await res.json();
+  if (!res.ok) throw new Error(d.detail || `HTTP ${res.status}`);
+  return d;
+}
+
+export async function coreAddFolder(path, name) {
+  const body = { path };
+  if (name) body.name = name;
+  const res = await fetch('/api/folders', {
+    method: 'POST',
+    credentials: 'include',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(body),
+  });
+  const d = await res.json();
+  if (!res.ok) throw new Error(d.detail || `HTTP ${res.status}`);
+  return d;
+}
+
+export async function coreRemoveFolder(name) {
+  const res = await fetch(`/api/folders/${encodeURIComponent(name)}`, {
+    method: 'DELETE',
+    credentials: 'include',
+  });
+  if (!res.ok) {
+    const d = await res.json().catch(() => ({}));
+    throw new Error(d.detail || `HTTP ${res.status}`);
+  }
+}

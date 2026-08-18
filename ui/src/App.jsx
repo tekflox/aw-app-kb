@@ -7,7 +7,7 @@ import { useState, useEffect, useCallback, useRef, useMemo } from 'react';
 import {
   kbListFiles, kbReadFile, kbSaveFile, kbDeleteFile, kbSearchFiles, kbMcpSearch,
   kbBuild, kbMapPath, kbMapAndBuild, kbGetStatus, kbGetDocCount, kbGetSettings, kbSaveSettings,
-  kbListRepos,
+  kbListRepos, coreBrowseFolders, coreAddFolder, coreRemoveFolder,
 } from './client';
 import { marked } from 'marked';
 
@@ -45,6 +45,16 @@ export default function App() {
   // backend: the workspace decides what EXISTS, this only records exceptions,
   // so a folder mapped later is indexed without touching anything here.
   const [disabledFolders, setDisabledFolders] = useState([]);
+  // Workspace-folder CRUD, ported in from core's Workspace nav (see
+  // client.js's coreListFolders/coreBrowseFolders/coreAddFolder/
+  // coreRemoveFolder comment for why this hits an absolute /api/folders
+  // path instead of this app's own api/kb/* surface).
+  const [folderBusy, setFolderBusy] = useState(false);
+  const [folderError, setFolderError] = useState(null);
+  const [folderPathInput, setFolderPathInput] = useState('');
+  const [folderNameInput, setFolderNameInput] = useState('');
+  const [folderBrowser, setFolderBrowser] = useState(null); // null = collapsed
+  const [foldersReconnecting, setFoldersReconnecting] = useState(false);
 
   const outputRef = useRef(null);
   const pollRef = useRef(null);
@@ -189,6 +199,71 @@ export default function App() {
       showMessage(`Could not save: ${name} left unchanged`);
     }
   }, [disabledFolders]);
+
+  // Adding/removing a workspace folder makes core recreate THIS container
+  // (see client.js), so the very fetch that would confirm success loses its
+  // connection instead. Poll kbListRepos — the first call it answers again
+  // means the container is back — rather than reading the drop as an error.
+  const reloadFoldersAfterRestart = useCallback(async () => {
+    setFoldersReconnecting(true);
+    for (let attempt = 0; attempt < 12; attempt += 1) {
+      await new Promise((resolve) => setTimeout(resolve, 1500));
+      try {
+        const r = await kbListRepos();
+        setMappedFolders(r.folders || []);
+        setFoldersReconnecting(false);
+        return;
+      } catch {
+        // container still restarting — keep polling
+      }
+    }
+    setFoldersReconnecting(false);
+    setFolderError('Lost the connection during the restart and could not reconnect — refresh the window.');
+  }, []);
+
+  const browseWorkspaceFolders = useCallback(async (path) => {
+    try {
+      const d = await coreBrowseFolders(path);
+      setFolderBrowser(d);
+      setFolderPathInput(d.path);
+      setFolderError(null);
+    } catch (e) {
+      setFolderError(e.message);
+    }
+  }, []);
+
+  const addWorkspaceFolder = useCallback(async (path, name) => {
+    const target = (path || '').trim();
+    if (!target) return;
+    setFolderBusy(true);
+    setFolderError(null);
+    try {
+      await coreAddFolder(target, (name || '').trim() || undefined);
+      setFolderPathInput('');
+      setFolderNameInput('');
+      setFolderBrowser(null);
+      showMessage('Folder mapped — KB container is restarting to pick it up');
+      reloadFoldersAfterRestart();
+    } catch (e) {
+      setFolderError(e.message);
+    } finally {
+      setFolderBusy(false);
+    }
+  }, [reloadFoldersAfterRestart]);
+
+  const removeWorkspaceFolder = useCallback(async (name) => {
+    setFolderBusy(true);
+    setFolderError(null);
+    try {
+      await coreRemoveFolder(name);
+      showMessage('Folder unmapped — KB container is restarting to drop it');
+      reloadFoldersAfterRestart();
+    } catch (e) {
+      setFolderError(e.message);
+    } finally {
+      setFolderBusy(false);
+    }
+  }, [reloadFoldersAfterRestart]);
 
   const handleSaveSettings = useCallback(async () => {
     setSettingsSaving(true);
@@ -397,6 +472,18 @@ export default function App() {
             onForceChange={setForce}
             onSaveSettings={handleSaveSettings}
             onPathInputKeyDown={(e) => e.key === 'Enter' && handleAddPath()}
+            folderBusy={folderBusy}
+            folderError={folderError}
+            folderPathInput={folderPathInput}
+            folderNameInput={folderNameInput}
+            folderBrowser={folderBrowser}
+            foldersReconnecting={foldersReconnecting}
+            onFolderPathInputChange={setFolderPathInput}
+            onFolderNameInputChange={setFolderNameInput}
+            onBrowseFolders={browseWorkspaceFolders}
+            onCloseBrowser={() => setFolderBrowser(null)}
+            onAddFolder={addWorkspaceFolder}
+            onRemoveFolder={removeWorkspaceFolder}
           />
         ) : selectedFile ? (
           <>
@@ -539,6 +626,9 @@ function ManagePanel({
   settingsSaving, mappedFolders, disabledFolders, onToggleFolder,
   onAddPath, onRemovePath, onMapOne, onMapAndBuild, onBuildOnly,
   onPathInputChange, onForceChange, onSaveSettings, onPathInputKeyDown,
+  folderBusy, folderError, folderPathInput, folderNameInput, folderBrowser,
+  foldersReconnecting, onFolderPathInputChange, onFolderNameInputChange,
+  onBrowseFolders, onCloseBrowser, onAddFolder, onRemoveFolder,
 }) {
   return (
     <div className="flex-1 overflow-y-auto p-4 space-y-4">
@@ -551,37 +641,47 @@ function ManagePanel({
         )}
       </div>
 
-      {/* Mapped Folders — the workspace's own folder map IS the source of
-          truth for what gets indexed. The user maintains it in ONE place
-          (Workspace > Folders / `aw-workspace-cli folders add`) and it
-          reaches this container as $AW_WORKSPACE_FOLDERS binds, so this
-          panel only reflects it; there is nothing to keep in sync by hand.
+      {/* Mapped Folders — any directory the user points at, workspace-wide,
+          no git repo required. This used to be a read-only mirror of
+          Workspace > Folders (add/remove lived only in core nav); it is now
+          the one place that CRUD happens, ported in whole because this app
+          is the only consumer of $AW_WORKSPACE_FOLDERS. Adding or removing
+          restarts THIS container a few seconds later — see
+          reloadFoldersAfterRestart in App.jsx — so the panel below shows a
+          "reconnecting" state instead of reading the drop as an error.
 
-          This list used to render `map_paths` — a second, app-local copy of
-          the same idea — under this same "Mapped Folders" heading. The two
-          drifted (map_paths held the absolute host path /opt/aw-workspace,
-          invisible from in here) and the panel showed the stale copy, so the
-          UI said one thing while --map-all did another. map_paths survives
-          below as "Extra paths", scoped to the one case workspace folders
-          can't express: kb's own private clones from --add-repo. */}
+          This list used to also render `map_paths` — a second, app-local
+          copy of the same idea — under this same heading. The two drifted
+          (map_paths held the absolute host path /opt/aw-workspace, invisible
+          from in here) and the panel showed the stale copy, so the UI said
+          one thing while --map-all did another. map_paths survives below as
+          "Extra paths", scoped to the one case workspace folders can't
+          express: kb's own private clones from --add-repo. */}
       <div className="border border-[var(--color-border)] rounded overflow-hidden">
         <div className="px-3 py-2 bg-[var(--color-bg-header)] flex items-center justify-between">
           <span className="text-xs font-semibold text-[var(--color-text-primary)]">Mapped Folders</span>
           <span className="text-[10px] text-[var(--color-text-muted)]">
-            {mappedFolders.filter((n) => !disabledFolders.includes(n)).length}
-            {' of '}{mappedFolders.length} indexed
+            {foldersReconnecting
+              ? 'restarting…'
+              : `${mappedFolders.filter((n) => !disabledFolders.includes(n)).length} of ${mappedFolders.length} indexed`}
           </span>
         </div>
+
+        {folderError && (
+          <p className="px-3 py-1.5 text-[11px] bg-[var(--color-danger)]/10 text-[var(--color-danger)] border-b border-[var(--color-danger)]/30">
+            {folderError}
+          </p>
+        )}
+
         <div className="divide-y divide-[var(--color-border)]">
           {mappedFolders.length === 0 && (
             <p className="px-3 py-2 text-xs text-[var(--color-text-muted)] italic">
-              No folders mapped at the workspace level. Map one with{' '}
-              <span className="font-mono not-italic">aw-workspace-cli folders add /absolute/path</span>{' '}
-              (or Workspace › Folders) and it appears here — any directory, no git repo needed.
+              No folders mapped yet. Map one below — any directory, no git repo needed.
             </p>
           )}
           {mappedFolders.map((name) => {
             const enabled = !disabledFolders.includes(name);
+            const busy = folderBusy || foldersReconnecting;
             return (
               <div key={name} className="flex items-center gap-2 px-3 py-1.5">
                 <ToggleSwitch
@@ -605,14 +705,111 @@ function ManagePanel({
                 >
                   Map
                 </button>
+                <button
+                  onClick={() => onRemoveFolder(name)}
+                  disabled={busy}
+                  title={`Unmap ${name}`}
+                  className="p-1 rounded hover:bg-white/10 text-[var(--color-text-muted)] hover:text-[var(--color-danger)] transition-colors disabled:opacity-40 shrink-0"
+                >
+                  <svg className="w-3 h-3" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                    <path d="M18 6L6 18M6 6l12 12" />
+                  </svg>
+                </button>
               </div>
             );
           })}
         </div>
+
+        {/* Add row — path + optional name + a directory browser, same shape
+            as the core Workspace nav's Folders submenu this replaced. */}
+        <div className="px-3 py-2 border-t border-[var(--color-border)] space-y-2">
+          <div className="flex items-center gap-1.5">
+            <input
+              value={folderPathInput}
+              onChange={(e) => onFolderPathInputChange(e.target.value)}
+              onKeyDown={(e) => e.key === 'Enter' && onAddFolder(folderPathInput, folderNameInput)}
+              placeholder="/absolute/path/to/folder"
+              disabled={folderBusy || foldersReconnecting}
+              className="flex-1 min-w-0 px-2 py-1 text-[11px] font-mono rounded bg-[var(--color-bg-primary)] border border-[var(--color-border)] text-[var(--color-text-primary)] placeholder:text-[var(--color-text-muted)] focus:outline-none focus:border-[var(--color-accent)] disabled:opacity-50"
+            />
+            <input
+              value={folderNameInput}
+              onChange={(e) => onFolderNameInputChange(e.target.value)}
+              onKeyDown={(e) => e.key === 'Enter' && onAddFolder(folderPathInput, folderNameInput)}
+              placeholder="name (optional)"
+              disabled={folderBusy || foldersReconnecting}
+              style={{ width: 110 }}
+              className="px-2 py-1 text-[11px] rounded bg-[var(--color-bg-primary)] border border-[var(--color-border)] text-[var(--color-text-primary)] placeholder:text-[var(--color-text-muted)] focus:outline-none focus:border-[var(--color-accent)] disabled:opacity-50"
+            />
+            <button
+              onClick={() => (folderBrowser ? onCloseBrowser() : onBrowseFolders(folderPathInput || null))}
+              disabled={folderBusy || foldersReconnecting}
+              className="px-2 py-1 text-[10px] rounded bg-white/5 hover:bg-white/10 text-[var(--color-text-muted)] transition-colors disabled:opacity-40 shrink-0"
+            >
+              {folderBrowser ? 'Hide' : 'Browse…'}
+            </button>
+            <button
+              onClick={() => onAddFolder(folderPathInput, folderNameInput)}
+              disabled={folderBusy || foldersReconnecting || !folderPathInput.trim()}
+              className="px-2 py-1 text-[10px] rounded bg-[var(--color-accent)]/15 text-[var(--color-accent)] hover:bg-[var(--color-accent)]/25 transition-colors disabled:opacity-40 shrink-0"
+            >
+              Map
+            </button>
+          </div>
+
+          {folderBrowser && (
+            <div className="rounded border border-[var(--color-border)] bg-[var(--color-bg-primary)]">
+              <div className="flex items-center gap-2 px-2 py-1 border-b border-[var(--color-border)]">
+                <button
+                  onClick={() => onBrowseFolders(folderBrowser.parent)}
+                  disabled={!folderBrowser.parent}
+                  className="text-[11px] text-[var(--color-text-muted)] hover:text-[var(--color-accent)] disabled:opacity-30"
+                  title="Up one level"
+                >
+                  ↑
+                </button>
+                <span className="flex-1 text-[10px] font-mono text-[var(--color-text-muted)] truncate" title={folderBrowser.path}>
+                  {folderBrowser.path}
+                </span>
+                <button
+                  onClick={() => onAddFolder(folderBrowser.path, folderNameInput)}
+                  disabled={folderBusy}
+                  className="text-[10px] text-[var(--color-accent)] hover:underline disabled:opacity-40 shrink-0"
+                >
+                  Map this one
+                </button>
+              </div>
+              <div className="overflow-y-auto" style={{ maxHeight: '26vh' }}>
+                {folderBrowser.entries.length === 0 ? (
+                  <div className="px-2 py-3 text-center text-[11px] text-[var(--color-text-muted)] italic">
+                    No subdirectories.
+                  </div>
+                ) : folderBrowser.entries.map((e) => (
+                  <div
+                    key={e.path}
+                    className="flex items-center gap-2 px-2 py-1 hover:bg-white/[0.05] cursor-pointer"
+                    onClick={() => onBrowseFolders(e.path)}
+                    title={e.path}
+                  >
+                    <span className="flex-1 text-[11px] text-[var(--color-text-primary)] truncate">{e.name}</span>
+                    <button
+                      onClick={(ev) => { ev.stopPropagation(); onAddFolder(e.path, ''); }}
+                      disabled={folderBusy}
+                      className="text-[10px] text-[var(--color-accent)] hover:underline disabled:opacity-40 shrink-0"
+                    >
+                      Map
+                    </button>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
+        </div>
+
         <p className="px-3 py-2 border-t border-[var(--color-border)] text-[10px] text-[var(--color-text-muted)]">
-          Managed in Workspace › Folders — add or remove there, not here. The switch
-          only controls indexing; switching one off drops its docs from the KB on
-          the next map.
+          The toggle only controls indexing; switching one off drops its docs from
+          the KB on the next map. Mapping/unmapping restarts this window for a few
+          seconds while the change lands.
         </p>
       </div>
 

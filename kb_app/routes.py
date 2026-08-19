@@ -8,14 +8,16 @@ fastembed model into the API process (same reasoning as the original).
 
 from __future__ import annotations
 
+import hashlib
 import logging
 import os
 import subprocess
 import sys
 import threading
+import time
 from datetime import datetime
 
-from fastapi import APIRouter, Body
+from fastapi import APIRouter, Body, Request, Response
 
 from . import settings as _settings
 from .kb_ops import KB_DIR
@@ -44,6 +46,74 @@ _job_state: dict = {
     "error": None,
     "last_run": None,
 }
+
+
+# ---------------------------------------------------------------------------
+# File-listing cache
+# ---------------------------------------------------------------------------
+# /api/kb/files walks the WHOLE knowledge base and stats every file — ~9.9k
+# entries / ~1.5 MB of JSON on this install. The UI polls it, so an idle KB
+# tab was paying that walk plus that payload every 10 s, forever. Two things
+# fix it without changing the response shape any caller depends on:
+#
+#   * a short TTL cache, so N clients (or one client polling fast during a
+#     build) share a single walk rather than each triggering their own;
+#   * a strong-ish ETag over (path, size, mtime), so an unchanged tree costs
+#     a 304 with an empty body instead of the full list.
+#
+# Writes go through save_file/delete_file, which invalidate explicitly — the
+# TTL is a backstop for changes made underneath us (a build/map job, an agent
+# calling update_knowledge_base), not the primary freshness mechanism.
+_FILES_CACHE_TTL = 5.0
+_files_cache_lock = threading.Lock()
+_files_cache: dict = {"key": None, "at": 0.0, "etag": "", "entries": []}
+
+
+def _scan_files() -> list[dict]:
+    result = []
+    for root, dirs, files in os.walk(KB_DIR):
+        dirs.sort()
+        for f in sorted(files):
+            if f.startswith("."):
+                continue
+            full_path = os.path.join(root, f)
+            rel = os.path.relpath(full_path, KB_DIR)
+            try:
+                stat = os.stat(full_path)
+            except OSError:
+                # Raced with a build job rewriting the tree — skip it rather
+                # than 500 the whole listing.
+                continue
+            result.append({
+                "path": rel,
+                "name": f,
+                "size": stat.st_size,
+                "modified": stat.st_mtime,
+            })
+    return result
+
+
+def _files_snapshot() -> tuple[str, list[dict]]:
+    """Return (etag, entries), reusing a recent scan when one exists."""
+    now = time.monotonic()
+    with _files_cache_lock:
+        if _files_cache["key"] == KB_DIR and now - _files_cache["at"] < _FILES_CACHE_TTL:
+            return _files_cache["etag"], _files_cache["entries"]
+
+    entries = _scan_files()
+    digest = hashlib.sha1()
+    for e in entries:
+        digest.update(f"{e['path']}\0{e['size']}\0{e['modified']}\n".encode())
+    etag = f'W/"{len(entries)}-{digest.hexdigest()}"'
+
+    with _files_cache_lock:
+        _files_cache.update(key=KB_DIR, at=now, etag=etag, entries=entries)
+    return etag, entries
+
+
+def _invalidate_files_cache() -> None:
+    with _files_cache_lock:
+        _files_cache.update(key=None, at=0.0, etag="", entries=[])
 
 
 def _run_job(code: str) -> None:
@@ -141,26 +211,24 @@ class KnowledgeBaseRoutes:
     # File CRUD
     # ------------------------------------------------------------------
 
-    async def list_files(self):
-        """List all files in the knowledge base as a flat list."""
+    async def list_files(self, request: Request, response: Response):
+        """List all files in the knowledge base as a flat list.
+
+        Conditional: send back the ETag from a previous response as
+        ``If-None-Match`` and an unchanged tree answers 304 with no body.
+        The 200 shape is unchanged — [{path, name, size, modified}].
+        """
         if not os.path.isdir(KB_DIR):
             return []
-        result = []
-        for root, dirs, files in os.walk(KB_DIR):
-            dirs.sort()
-            for f in sorted(files):
-                if f.startswith("."):
-                    continue
-                full_path = os.path.join(root, f)
-                rel = os.path.relpath(full_path, KB_DIR)
-                stat = os.stat(full_path)
-                result.append({
-                    "path": rel,
-                    "name": f,
-                    "size": stat.st_size,
-                    "modified": stat.st_mtime,
-                })
-        return result
+
+        etag, entries = _files_snapshot()
+        # no-store on the 304 path too: the browser must keep asking us, we
+        # just want the answer to be cheap, not skipped.
+        headers = {"ETag": etag, "Cache-Control": "no-cache"}
+        if request.headers.get("if-none-match") == etag:
+            return Response(status_code=304, headers=headers)
+        response.headers.update(headers)
+        return entries
 
     async def read_file(self, path: str):
         full = self._safe_path(path)
@@ -177,6 +245,7 @@ class KnowledgeBaseRoutes:
         content = data.get("content", "")
         with open(full, "w") as f:
             f.write(content)
+        _invalidate_files_cache()
 
         def do_update():
             try:
@@ -207,6 +276,7 @@ class KnowledgeBaseRoutes:
                 parent = os.path.dirname(parent)
             else:
                 break
+        _invalidate_files_cache()
 
         def do_delete():
             try:

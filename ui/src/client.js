@@ -15,8 +15,27 @@ async function json(path, opts) {
   return res.json();
 }
 
+// The file list is by far the heaviest thing this app serves (~9.9k entries
+// on a fully-mapped workspace) and it is polled, so it goes through a
+// conditional request: we hand back the previous ETag and, when nothing
+// changed, the server answers 304 with no body and we return the SAME array
+// reference we returned last time. Identity matters — `setFiles(same)` makes
+// React bail out of the re-render, which is what stops the tree being rebuilt
+// on every tick. If the ETag ever fails to survive a proxy hop this quietly
+// degrades to the old full-body behaviour instead of breaking.
+let _filesEtag = null;
+let _filesCache = [];
+
 export async function kbListFiles() {
-  return json('api/kb/files');
+  const res = await fetch('api/kb/files', {
+    headers: _filesEtag ? { 'If-None-Match': _filesEtag } : undefined,
+  });
+  if (res.status === 304) return _filesCache;
+  const etag = res.headers.get('ETag');
+  const data = await res.json();
+  _filesEtag = etag || null;
+  _filesCache = Array.isArray(data) ? data : [];
+  return _filesCache;
 }
 
 export async function kbReadFile(path) {

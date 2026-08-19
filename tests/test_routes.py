@@ -274,3 +274,50 @@ def test_disabled_folders_are_skipped_and_pruned(tmp_path, monkeypatch, capsys):
     settings_mod.save_settings({"disabled_folders": []})
     kb_ops._map_all()
     assert sorted(p.name for p in out.iterdir()) == ["docs", "skills"]
+
+
+def test_list_files_conditional_request_returns_304(tmp_path, monkeypatch):
+    """The file list is polled by the UI and is the heaviest response this
+    app serves (~9.9k entries live), so an unchanged tree must cost a 304
+    with no body rather than the full list every tick."""
+    app = _make_app(tmp_path, monkeypatch)
+    _stub_kb_pg(monkeypatch)
+
+    with TestClient(app) as client:
+        client.put("/api/kb/file/docs/hello.md", json={"content": "# Hello\n"})
+
+        first = client.get("/api/kb/files")
+        assert first.status_code == 200
+        etag = first.headers["etag"]
+        assert etag
+
+        again = client.get("/api/kb/files", headers={"If-None-Match": etag})
+        assert again.status_code == 304
+        assert again.content == b""
+        assert again.headers["etag"] == etag
+
+        # A stale/absent validator still gets the real list back.
+        stale = client.get("/api/kb/files", headers={"If-None-Match": 'W/"nope"'})
+        assert stale.status_code == 200
+        assert [f["path"] for f in stale.json()] == ["docs/hello.md"]
+
+
+def test_list_files_cache_invalidated_by_writes(tmp_path, monkeypatch):
+    """The scan is cached for a few seconds so concurrent pollers share one
+    walk — but a write through this API must be visible immediately, and must
+    change the ETag, or the UI would keep 304-ing on a stale list."""
+    app = _make_app(tmp_path, monkeypatch)
+    _stub_kb_pg(monkeypatch)
+
+    with TestClient(app) as client:
+        client.put("/api/kb/file/docs/one.md", json={"content": "one\n"})
+        etag_one = client.get("/api/kb/files").headers["etag"]
+
+        client.put("/api/kb/file/docs/two.md", json={"content": "two\n"})
+        res = client.get("/api/kb/files", headers={"If-None-Match": etag_one})
+        assert res.status_code == 200
+        assert sorted(f["path"] for f in res.json()) == ["docs/one.md", "docs/two.md"]
+
+        client.delete("/api/kb/file/docs/two.md")
+        res = client.get("/api/kb/files")
+        assert [f["path"] for f in res.json()] == ["docs/one.md"]

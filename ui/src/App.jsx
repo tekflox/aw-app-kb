@@ -58,6 +58,9 @@ export default function App() {
 
   const outputRef = useRef(null);
   const pollRef = useRef(null);
+  // Tracks the previous poll's job state so the expensive refreshes fire on
+  // the running -> idle transition instead of on every idle tick.
+  const wasRunningRef = useRef(false);
 
   useEffect(() => {
     kbListFiles().then(setFiles);
@@ -74,29 +77,51 @@ export default function App() {
     kbListRepos().then((r) => setMappedFolders(r.folders || []));
   }, []);
 
-  // Polling for job status
+  // Polling for job status.
+  //
+  // This used to re-fetch EVERYTHING on every idle tick: the `!status.running`
+  // branch is true whenever no job is running, i.e. essentially always, so an
+  // idle tab fired status + doc-count + the full ~9.9k-entry file list + the
+  // repo list every 10 seconds. Doc count and repo list only ever change when
+  // a build/map/add-repo job finishes, so they belong on the running -> idle
+  // EDGE, not on the level. The file list stays on the tick (an agent can
+  // write to the KB behind our back) but is a conditional request now — see
+  // kbListFiles: unchanged means 304 and the same array reference back, so no
+  // re-render. Idle cadence is also slower, and a hidden tab polls nothing.
   useEffect(() => {
+    let cancelled = false;
+
     const poll = async () => {
+      if (document.hidden) return;
       try {
         const status = await kbGetStatus();
+        if (cancelled) return;
         setJobStatus(status);
-        if (!status.running) {
-          // Also refresh doc count when job finishes
+        if (wasRunningRef.current && !status.running) {
           const dc = await kbGetDocCount();
+          if (cancelled) return;
           setDocCount(dc.count ?? 0);
-          // Refresh file list too
-          kbListFiles().then(setFiles);
           // Cover add-repo jobs finishing (Mapped Folders bare names resolve
           // against this list — stale list = the exact "path not found"
           // confusion this was built to prevent).
-          kbListRepos().then((r) => setMappedFolders(r.folders || []));
+          kbListRepos().then((r) => !cancelled && setMappedFolders(r.folders || []));
         }
+        wasRunningRef.current = status.running;
+        kbListFiles().then((f) => !cancelled && setFiles(f));
       } catch {}
     };
 
-    const interval = jobStatus.running ? 2000 : 10000;
+    const interval = jobStatus.running ? 2000 : 30000;
     pollRef.current = setInterval(poll, interval);
-    return () => clearInterval(pollRef.current);
+    // Coming back to a backgrounded tab should feel current immediately
+    // rather than after up to 30 s of staleness.
+    const onVisibility = () => { if (!document.hidden) poll(); };
+    document.addEventListener('visibilitychange', onVisibility);
+    return () => {
+      cancelled = true;
+      clearInterval(pollRef.current);
+      document.removeEventListener('visibilitychange', onVisibility);
+    };
   }, [jobStatus.running]);
 
   // Auto-scroll output log to bottom
@@ -313,8 +338,9 @@ export default function App() {
     return marked.parse(md);
   }, [content]);
 
-  // Build tree from flat file list
-  const tree = buildTree(files, sidebarFilter);
+  // Build tree from flat file list. Memoized: buildTree walks all ~9.9k
+  // entries, and this component re-renders on every keystroke in the editor.
+  const tree = useMemo(() => buildTree(files, sidebarFilter), [files, sidebarFilter]);
 
   const displayLines = jobStatus.output ? jobStatus.output.slice(-30) : [];
 

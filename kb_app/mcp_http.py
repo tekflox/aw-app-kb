@@ -24,6 +24,7 @@ process rather than a short-lived per-connection child:
 from __future__ import annotations
 
 import os
+import posixpath
 import re
 
 from . import kb_ops
@@ -155,7 +156,61 @@ TOOLS_SCHEMA = [
 _DISPATCH_NAMES = {t["name"] for t in TOOLS_SCHEMA}
 
 
-def _search_knowledge_base(query: str, n_results: int = 5) -> dict:
+# ── Per-profile scope (injected by the MCP gateway) ─────────────────────────
+#
+# A scoped gateway config (``/mcp/<name>``, see aw-mcp-gateway's ConfigGateway)
+# forces ``_gateway_kb_index`` onto every call it routes here. It is absent
+# from every tool's public inputSchema on purpose: the caller neither sees it
+# nor can unset it, which is what makes it a boundary rather than a convention.
+# Unscoped callers (the plain ``/mcp`` endpoint, the REST API, the UI) pass
+# nothing and see the whole knowledge base, exactly as before.
+#
+# A scope names one or more `repo` values — the mapped-folder name each
+# document was indexed under (see Workspace › Folders). That is the slice this
+# KB already has, so one shared pgvector index serves every profile without a
+# dedicated MCP server per slice.
+# Over-fetch factor for a scoped search: the filter runs AFTER the vector
+# search, so asking for exactly n_results would return almost nothing when the
+# scope is a small slice of a large KB.
+_SCOPED_OVERFETCH = 80
+
+
+def _scope(kb_index) -> set[str] | None:
+    if not kb_index:
+        return None
+    if isinstance(kb_index, str):
+        return {kb_index}
+    return {str(v) for v in kb_index if v}
+
+
+def _scope_note(allowed: set[str] | None) -> str:
+    return f" in '{'/'.join(sorted(allowed))}/'" if allowed else ""
+
+
+def _force_scope(path: str, kb_index) -> str:
+    """Force a write path under the profile's scope folder, whatever the caller
+    passed. Only applies to a single-valued scope — with several allowed repos
+    there is no one place a write belongs, so the path is left alone and the
+    read filter remains the only restriction.
+
+    ``..`` is collapsed against the root BEFORE the prefix goes on. Prefixing a
+    raw ``../elsewhere/x.md`` would produce ``<root>/../elsewhere/x.md``, which
+    looks scoped and normalises straight back out of the scope — the prefix has
+    to be applied to an already-contained path to mean anything.
+    """
+    allowed = _scope(kb_index)
+    if not allowed or len(allowed) != 1:
+        return path
+    root = next(iter(allowed))
+    path = posixpath.normpath("/" + (path or "").strip()).lstrip("/")
+    if path in (".", ""):
+        return root
+    if path == root or path.startswith(f"{root}/"):
+        return path
+    return f"{root}/{path}"
+
+
+def _search_knowledge_base(query: str, n_results: int = 5, kb_index=None) -> dict:
     if not query:
         return _tool_result("Please provide a search query.", is_error=True)
 
@@ -167,13 +222,19 @@ def _search_knowledge_base(query: str, n_results: int = 5) -> dict:
             is_error=True,
         )
 
-    n_results = min(n_results, total)
-    results = _kb.search(query, n_results=n_results)
+    allowed = _scope(kb_index)
+    if allowed:
+        candidates = _kb.search(query, n_results=min(_SCOPED_OVERFETCH, total))
+        results = [r for r in candidates
+                   if r["metadata"].get("repo") in allowed][:n_results]
+    else:
+        n_results = min(n_results, total)
+        results = _kb.search(query, n_results=n_results)
 
     if not results:
-        return _tool_result("No results found.", is_error=True)
+        return _tool_result(f"No results found{_scope_note(allowed)}.", is_error=True)
 
-    output_parts = [f"Found {len(results)} results for: {query}\n"]
+    output_parts = [f"Found {len(results)} results{_scope_note(allowed)} for: {query}\n"]
     for i, r in enumerate(results):
         score = r["score"]
         meta = r["metadata"]
@@ -195,9 +256,10 @@ def _search_knowledge_base(query: str, n_results: int = 5) -> dict:
     return _tool_result("\n".join(output_parts))
 
 
-def _update_knowledge_base(path: str, content: str) -> dict:
+def _update_knowledge_base(path: str, content: str, kb_index=None) -> dict:
     if not path or not content:
         return _tool_result("Both 'path' and 'content' are required.", is_error=True)
+    path = _force_scope(path, kb_index)
     try:
         kb_ops.update(path, content)
         return _tool_result(f"Updated: {path}")
@@ -205,9 +267,10 @@ def _update_knowledge_base(path: str, content: str) -> dict:
         return _tool_result(f"Error: {e}", is_error=True)
 
 
-def _delete_knowledge_base(path: str) -> dict:
+def _delete_knowledge_base(path: str, kb_index=None) -> dict:
     if not path:
         return _tool_result("'path' is required.", is_error=True)
+    path = _force_scope(path, kb_index)
     try:
         existed = kb_ops.delete(path)
         return _tool_result(f"Deleted: {path}" if existed else f"Not found: {path}")
@@ -307,9 +370,14 @@ def _load_skill(name: str) -> dict:
 
 
 _HANDLERS = {
-    "search_knowledge_base": lambda a: _search_knowledge_base(a.get("query", ""), a.get("n_results", 5)),
-    "update_knowledge_base": lambda a: _update_knowledge_base(a.get("path", ""), a.get("content", "")),
-    "delete_knowledge_base": lambda a: _delete_knowledge_base(a.get("path", "")),
+    # `_gateway_kb_index` is the gateway-injected per-profile scope — see the
+    # block above _search_knowledge_base. Unscoped callers never send it.
+    "search_knowledge_base": lambda a: _search_knowledge_base(
+        a.get("query", ""), a.get("n_results", 5), a.get("_gateway_kb_index")),
+    "update_knowledge_base": lambda a: _update_knowledge_base(
+        a.get("path", ""), a.get("content", ""), a.get("_gateway_kb_index")),
+    "delete_knowledge_base": lambda a: _delete_knowledge_base(
+        a.get("path", ""), a.get("_gateway_kb_index")),
     "search_skills": lambda a: _search_skills(a.get("query", ""), a.get("n_results", 5)),
     "load_skill": lambda a: _load_skill(a.get("name", "")),
 }

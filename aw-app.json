@@ -26,7 +26,10 @@
       "SHARED_REPOS_DIR": "/workspace-repos",
       "MAPPED_FOLDERS_DIR": "/workspace-folders",
       "PGDATA": "/app/persist/pgdata",
-      "KB_SKILLS_DIR": "/app/skills"
+      "KB_SKILLS_DIR": "/app/skills",
+      "KB_EXEC_SECRET": "${config.exec_secret}",
+      "KB_EXEC_RETENTION_DAYS": "${config.exec_retention_days}",
+      "KB_EXEC_MAX_ROWS": "${config.exec_max_rows}"
     },
     "volumes": [
       {
@@ -94,6 +97,7 @@
         "update_knowledge_base",
         "delete_knowledge_base",
         "search_skills",
+        "search_execution_history",
         "load_skill"
       ]
     },
@@ -112,6 +116,24 @@
         "default": true,
         "title": "Auto-start",
         "description": "Start the Knowledge Base container when the workspace starts."
+      },
+      "exec_secret": {
+        "type": "string",
+        "default": "",
+        "title": "Execution-history write secret",
+        "description": "Shared secret the agents-platform-runners app must send as X-KB-Exec-Secret to POST /api/kb/executions. Empty means the endpoint is closed (503) — it is never left open."
+      },
+      "exec_retention_days": {
+        "type": "integer",
+        "default": 30,
+        "title": "Execution history retention (days)",
+        "description": "How long an indexed run dump stays searchable via search_execution_history. AP-MT itself never purges runs, so this only affects findability, not the underlying record."
+      },
+      "exec_max_rows": {
+        "type": "integer",
+        "default": 80000,
+        "title": "Execution history row cap",
+        "description": "Global backstop on indexed execution chunks, independent of retention_days — oldest rows are pruned first once this is exceeded."
       }
     },
     "required": []

@@ -15,12 +15,12 @@ def test_notifications_return_none():
     assert mcp_http.handle_request({"jsonrpc": "2.0", "method": "notifications/initialized"}) is None
 
 
-def test_tools_list_has_all_five_tools():
+def test_tools_list_has_all_six_tools():
     resp = mcp_http.handle_request({"jsonrpc": "2.0", "id": 2, "method": "tools/list"})
     names = {t["name"] for t in resp["result"]["tools"]}
     assert names == {
         "search_knowledge_base", "update_knowledge_base", "delete_knowledge_base",
-        "search_skills", "load_skill",
+        "search_skills", "search_execution_history", "load_skill",
     }
 
 
@@ -186,3 +186,115 @@ def test_an_unscoped_write_keeps_the_path_it_was_given(monkeypatch):
     _call("update_knowledge_base", {"path": "memory/note.md", "content": "x"})
 
     assert written["path"] == "memory/note.md"
+
+
+# ---- search_execution_history ----------------------------------------------
+
+
+def _exec_chunk(run_id, seq=0, content="matched excerpt", status="success", score=0.9):
+    return {
+        "chunk_id": f"{run_id}:{seq}", "run_id": run_id, "seq": seq, "content": content,
+        "metadata": {"status": status, "agent_slug": "coder-sonnet", "target_slug": "t1",
+                     "ended_at": "2026-09-04T00:00:00", "cost_usd": 0.42},
+        "score": score,
+    }
+
+
+def test_search_execution_history_empty_index_reports_error(monkeypatch):
+    from kb_app import exec_pg
+    monkeypatch.setattr(exec_pg, "count", lambda: 0)
+    result = _call("search_execution_history", {"query": "anything"})
+    assert result["isError"] is True
+    assert "no execution history" in result["content"][0]["text"].lower()
+
+
+def test_search_execution_history_groups_chunks_by_run(monkeypatch):
+    from kb_app import exec_pg
+    monkeypatch.setattr(exec_pg, "count", lambda: 10)
+    # Two chunks from the SAME run, one from another — must collapse to 2 blocks.
+    monkeypatch.setattr(exec_pg, "search", lambda q, n_results=5, filters=None: [
+        _exec_chunk("run-1", seq=0, content="first chunk"),
+        _exec_chunk("run-1", seq=1, content="second chunk"),
+        _exec_chunk("run-2", seq=0, content="other run"),
+    ])
+
+    text = _call("search_execution_history", {"query": "tool error"})["content"][0]["text"]
+
+    assert text.count("--- Run run-1") == 1
+    assert text.count("--- Run run-2") == 1
+    assert "get_run_detail(run_id='run-1')" in text
+    assert "get_run_detail(run_id='run-2')" in text
+
+
+def test_search_execution_history_passes_filters_through(monkeypatch):
+    from kb_app import exec_pg
+    monkeypatch.setattr(exec_pg, "count", lambda: 10)
+    captured = {}
+
+    def _fake_search(q, n_results=5, filters=None):
+        captured["filters"] = filters
+        return [_exec_chunk("run-1")]
+
+    monkeypatch.setattr(exec_pg, "search", _fake_search)
+
+    _call("search_execution_history", {
+        "query": "x", "status": "error", "agent_slug": "coder-sonnet",
+        "target_slug": "t1", "since_days": 7, "run_id": "run-1",
+    })
+
+    assert captured["filters"] == {
+        "status": "error", "agent_slug": "coder-sonnet",
+        "target_slug": "t1", "since_days": 7, "run_id": "run-1",
+    }
+
+
+def test_search_execution_history_no_match_is_an_explicit_miss(monkeypatch):
+    from kb_app import exec_pg
+    monkeypatch.setattr(exec_pg, "count", lambda: 10)
+    monkeypatch.setattr(exec_pg, "search", lambda q, n_results=5, filters=None: [])
+
+    result = _call("search_execution_history", {"query": "nothing like this"})
+    assert result["isError"] is True
+
+
+# ---- diff-zero: search_knowledge_base must never surface executions -------
+#
+# The card's own words: "diff ZERO no caminho de docs" — search_knowledge_base
+# is not allowed to touch the executions table or exec_pg at all. This is the
+# single most important test in this feature: it fails loudly the moment
+# anyone wires the two together, rather than relying on code review to catch
+# a future regression.
+
+
+def test_search_knowledge_base_never_calls_exec_pg(monkeypatch):
+    from kb_app import exec_pg, kb_pg
+
+    monkeypatch.setattr(kb_pg, "count", lambda: 3)
+    monkeypatch.setattr(kb_pg, "search", lambda q, n_results=5: [_doc("docs", "a.md", "plain doc content")])
+
+    def _must_not_be_called(*a, **k):
+        raise AssertionError("search_knowledge_base must never touch exec_pg")
+
+    monkeypatch.setattr(exec_pg, "search", _must_not_be_called)
+    monkeypatch.setattr(exec_pg, "count", _must_not_be_called)
+
+    text = _call("search_knowledge_base", {"query": "anything"})["content"][0]["text"]
+    assert "plain doc content" in text
+
+
+def test_search_execution_history_never_calls_kb_pg_search(monkeypatch):
+    """The reverse guarantee: the new tool must not fall back onto the docs
+    table either — a bug there would leak `documents` content into a tool
+    whose whole point is a separate, execution-only index."""
+    from kb_app import exec_pg, kb_pg
+
+    monkeypatch.setattr(exec_pg, "count", lambda: 3)
+    monkeypatch.setattr(exec_pg, "search", lambda q, n_results=5, filters=None: [_exec_chunk("run-1")])
+
+    def _must_not_be_called(*a, **k):
+        raise AssertionError("search_execution_history must never touch kb_pg.search")
+
+    monkeypatch.setattr(kb_pg, "search", _must_not_be_called)
+
+    result = _call("search_execution_history", {"query": "anything"})
+    assert result["isError"] is False

@@ -18,6 +18,7 @@ import time
 from datetime import datetime
 
 from fastapi import APIRouter, Body, Request, Response
+from fastapi.responses import JSONResponse
 
 from . import settings as _settings
 from .kb_ops import KB_DIR
@@ -116,6 +117,27 @@ def _invalidate_files_cache() -> None:
         _files_cache.update(key=None, at=0.0, etag="", entries=[])
 
 
+# ---------------------------------------------------------------------------
+# AP-MT execution-history index — auth
+# ---------------------------------------------------------------------------
+# Shared-secret header, checked on every write to /api/kb/executions*. Any
+# container on the podman network can reach this route directly (Tier-2 apps
+# are not behind the workspace's own IdentityGuard the way Tier-1 routes
+# are) — so an unconfigured secret means CLOSED (503), never open. Mirrors
+# the agents-platform-runners app's own execute_secret gate.
+def _check_exec_secret(request: Request) -> Response | None:
+    configured = os.environ.get("KB_EXEC_SECRET", "").strip()
+    if not configured:
+        return JSONResponse(
+            {"error": "KB_EXEC_SECRET is not configured on this Knowledge Base install"},
+            status_code=503,
+        )
+    provided = request.headers.get("x-kb-exec-secret", "")
+    if not provided or provided != configured:
+        return JSONResponse({"error": "unauthorized"}, status_code=401)
+    return None
+
+
 def _run_job(code: str) -> None:
     """Execute `code` in a fresh Python subprocess, streaming stdout/stderr."""
     global _job_state
@@ -195,6 +217,11 @@ class KnowledgeBaseRoutes:
         router.put("/api/kb/settings")(self.save_settings)
         router.post("/api/kb/add-repo")(self.add_repo)
         router.get("/api/kb/repos")(self.list_repos)
+        # AP-MT execution-history index — separate table, separate MCP tool,
+        # see kb_app/exec_pg.py's module docstring for why.
+        router.post("/api/kb/executions")(self.post_executions)
+        router.post("/api/kb/executions/prune")(self.post_executions_prune)
+        router.get("/api/kb/executions/status")(self.get_executions_status)
 
     # ------------------------------------------------------------------
     # Helpers
@@ -464,6 +491,67 @@ class KnowledgeBaseRoutes:
             return {"count": kb_pg.count()}
         except Exception as e:
             return {"count": 0, "error": str(e)}
+
+    # ------------------------------------------------------------------
+    # AP-MT execution-history index
+    # ------------------------------------------------------------------
+
+    async def post_executions(self, request: Request, data: dict = Body(...)):
+        """Upsert one run's chunks. Body: {run_id, chunks: [{seq, content,
+        metadata}], metadata_common}. Idempotent per run — reindexing the
+        same run_id replaces its chunks, never duplicates them."""
+        auth_err = _check_exec_secret(request)
+        if auth_err:
+            return auth_err
+
+        run_id = (data.get("run_id") or "").strip()
+        if not run_id:
+            return JSONResponse({"error": "run_id is required"}, status_code=400)
+
+        chunks_in = data.get("chunks")
+        if not isinstance(chunks_in, list) or not chunks_in:
+            return JSONResponse({"error": "chunks must be a non-empty list"}, status_code=400)
+
+        metadata_common = data.get("metadata_common") or {}
+        chunks = []
+        for c in chunks_in:
+            if not isinstance(c, dict) or c.get("seq") is None or not c.get("content"):
+                return JSONResponse(
+                    {"error": f"each chunk needs seq and content: {c!r}"}, status_code=400,
+                )
+            meta = dict(metadata_common)
+            meta.update(c.get("metadata") or {})
+            chunks.append({"seq": c["seq"], "content": c["content"], "metadata": meta})
+
+        from . import exec_pg
+        try:
+            n = exec_pg.upsert_chunks(run_id, chunks)
+        except ValueError as e:
+            return JSONResponse({"error": str(e)}, status_code=400)
+        except Exception as e:
+            log.warning(f"failed to index execution run {run_id}: {e}")
+            return JSONResponse({"error": str(e)}, status_code=500)
+
+        return {"success": True, "run_id": run_id, "chunks_indexed": n}
+
+    async def post_executions_prune(self, request: Request, data: dict = Body(default={})):
+        """Manual retention sweep — same logic the daily lifespan task runs."""
+        auth_err = _check_exec_secret(request)
+        if auth_err:
+            return auth_err
+
+        from . import exec_pg
+        result = exec_pg.prune(
+            retention_days=data.get("retention_days"),
+            max_rows=data.get("max_rows"),
+        )
+        return {"success": True, **result}
+
+    async def get_executions_status(self):
+        """Observability: chunk/run counts, oldest/newest indexed_at. Read-only,
+        no secret required — mirrors /api/kb/doc-count's own posture."""
+        from . import exec_pg
+        return exec_pg.status()
 
 
 def build_routes() -> APIRouter:

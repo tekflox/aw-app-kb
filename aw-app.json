@@ -2,7 +2,7 @@
   "manifest_version": 1,
   "id": "kb",
   "name": "Knowledge Base",
-  "version": "0.25.0",
+  "version": "0.26.0",
   "description": "Semantic search over project docs and skills, backed by Postgres/pgvector. Ported from the agentic-workspace monolith's Knowledge Base \u2014 file browser/editor, semantic + text search, code-map build jobs, and an MCP surface (search/update/delete_knowledge_base, search/load_skill) that aw-mcp-gateway picks up automatically.",
   "icon": "book-open",
   "tier": "container",
@@ -121,7 +121,7 @@
         "type": "string",
         "default": "",
         "title": "Execution-history write secret",
-        "description": "Shared secret the agents-platform-runners app must send as X-KB-Exec-Secret to POST /api/kb/executions. Empty means the endpoint is closed (503) — it is never left open."
+        "description": "Shared secret the agents-platform-runners app must send as X-KB-Exec-Secret to POST /api/kb/executions. Empty means the endpoint is closed (503) \u2014 it is never left open."
       },
       "exec_retention_days": {
         "type": "integer",
@@ -133,7 +133,7 @@
         "type": "integer",
         "default": 80000,
         "title": "Execution history row cap",
-        "description": "Global backstop on indexed execution chunks, independent of retention_days — oldest rows are pruned first once this is exceeded."
+        "description": "Global backstop on indexed execution chunks, independent of retention_days \u2014 oldest rows are pruned first once this is exceeded."
       }
     },
     "required": []

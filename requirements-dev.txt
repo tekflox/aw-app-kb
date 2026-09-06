@@ -1,0 +1,10 @@
+# Installed by the shared release workflow (tekflox/aw-marketplace's
+# app-release.yml) on top of its own fixed pytest/jsonschema/fastapi/httpx/
+# uvicorn set, before running `pytest tests/`. That workflow only looks for
+# `requirements-dev.txt` at the repo ROOT — this app's actual backend lives
+# under kb_app/, which has its own requirements-dev.txt, but that one was
+# never reachable from CI. tests/test_exec_pg.py imports psycopg directly
+# (to patch psycopg.connect for the force=True TRUNCATE-isolation test),
+# which surfaced the gap: `ModuleNotFoundError: No module named 'psycopg'`
+# on the release run for PR #2 (run 34023356996).
+-r kb_app/requirements-dev.txt

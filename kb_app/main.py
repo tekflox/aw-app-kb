@@ -15,6 +15,7 @@ subdomain (see aw-app.json's ``app_iframe`` window), not mounted under
 
 from __future__ import annotations
 
+import asyncio
 import logging
 import os
 from contextlib import asynccontextmanager
@@ -24,6 +25,7 @@ from fastapi import FastAPI, Request
 from fastapi.responses import JSONResponse, Response
 from fastapi.staticfiles import StaticFiles
 
+from . import exec_pg
 from . import kb_pg
 from . import mcp_http
 from . import self_register
@@ -37,12 +39,36 @@ PORT = int(os.environ.get("PORT", "8000"))
 APP_ROOT = Path(__file__).resolve().parent.parent
 UI_DIST = APP_ROOT / "ui" / "dist"
 
+# Retention for the executions index is swept from HERE, not from the
+# aw-tasks app — a DELETE belongs next to the table it deletes from, and a
+# scheduled task an operator can silently remove would turn "expires after
+# 30 days" into "grows forever" with nothing surfacing the change. See
+# exec_pg.py's module docstring.
+_EXEC_PRUNE_INTERVAL_SECONDS = 24 * 60 * 60
+
+
+async def _exec_prune_loop() -> None:
+    while True:
+        try:
+            result = exec_pg.prune()
+            log.info("exec_pg: retention sweep — %s", result)
+        except asyncio.CancelledError:
+            raise
+        except Exception as exc:
+            log.warning("exec_pg: retention sweep failed: %s", exc)
+        await asyncio.sleep(_EXEC_PRUNE_INTERVAL_SECONDS)
+
 
 @asynccontextmanager
 async def lifespan(_app: FastAPI):
     kb_pg.ensure_kb_schema(retries=12, delay=1.0)
+    exec_pg.ensure_exec_schema(retries=12, delay=1.0)
     self_register.register_self(PORT)
-    yield
+    prune_task = asyncio.create_task(_exec_prune_loop())
+    try:
+        yield
+    finally:
+        prune_task.cancel()
 
 
 def build_app() -> FastAPI:

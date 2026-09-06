@@ -27,6 +27,7 @@ import os
 import posixpath
 import re
 
+from . import exec_pg
 from . import kb_ops
 from . import kb_pg as _kb
 
@@ -128,6 +129,54 @@ TOOLS_SCHEMA = [
                     "type": "integer",
                     "description": "Max number of skills to return (default: 5)",
                     "default": 5,
+                },
+            },
+            "required": ["query"],
+        },
+    },
+    {
+        "name": "search_execution_history",
+        "description": (
+            "Search indexed AP-MT execution-run dumps by semantic similarity — "
+            "e.g. 'have we seen this tool error before, and how did it resolve'. "
+            "Separate from search_knowledge_base and its own pgvector table; "
+            "this never returns docs, and search_knowledge_base never returns "
+            "execution history. Returns one summary block per matching run "
+            "(status, agent, target, ended_at, cost, the excerpt that matched) — "
+            "call get_run_detail(run_id=...) on the agents-platform-runners MCP "
+            "for the full record; this tool only finds the run, it doesn't open it."
+        ),
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "query": {
+                    "type": "string",
+                    "description": "Natural language search query",
+                },
+                "n_results": {
+                    "type": "integer",
+                    "description": "Max number of runs to return (default: 5)",
+                    "default": 5,
+                },
+                "status": {
+                    "type": "string",
+                    "description": "Filter by run status, e.g. 'success' or 'error'",
+                },
+                "agent_slug": {
+                    "type": "string",
+                    "description": "Filter by agent slug",
+                },
+                "target_slug": {
+                    "type": "string",
+                    "description": "Filter by target slug",
+                },
+                "since_days": {
+                    "type": "integer",
+                    "description": "Only consider runs indexed in the last N days",
+                },
+                "run_id": {
+                    "type": "string",
+                    "description": "Restrict the search to one specific run id",
                 },
             },
             "required": ["query"],
@@ -278,6 +327,69 @@ def _delete_knowledge_base(path: str, kb_index=None) -> dict:
         return _tool_result(f"Error: {e}", is_error=True)
 
 
+# Several matching chunks can belong to the same run — overfetch chunk-level
+# results so grouping by run_id still surfaces n_results DISTINCT runs.
+_RUN_GROUP_OVERFETCH = 6
+
+
+def _search_execution_history(
+    query: str, n_results: int = 5, status: str | None = None,
+    agent_slug: str | None = None, target_slug: str | None = None,
+    since_days: int | None = None, run_id: str | None = None,
+) -> dict:
+    if not query:
+        return _tool_result("Please provide a search query.", is_error=True)
+
+    total = exec_pg.count()
+    if total == 0:
+        return _tool_result("No execution history indexed yet.", is_error=True)
+
+    filters = {}
+    if status:
+        filters["status"] = status
+    if agent_slug:
+        filters["agent_slug"] = agent_slug
+    if target_slug:
+        filters["target_slug"] = target_slug
+    if since_days is not None:
+        filters["since_days"] = since_days
+    if run_id:
+        filters["run_id"] = run_id
+
+    raw_n = min(max(n_results, 1) * _RUN_GROUP_OVERFETCH, total)
+    results = exec_pg.search(query, n_results=raw_n, filters=filters)
+    if not results:
+        return _tool_result(f"No execution history matched: {query}", is_error=True)
+
+    # Group by run_id — one block per RUN, not one per matching chunk. The
+    # tool finds the run; opening it is get_run_detail's job.
+    by_run: dict[str, dict] = {}
+    order: list[str] = []
+    for r in results:
+        rid = r["run_id"]
+        if rid not in by_run:
+            by_run[rid] = r
+            order.append(rid)
+    order = order[:n_results]
+
+    lines = [f"Found {len(order)} run(s) matching: {query}\n"]
+    for rid in order:
+        r = by_run[rid]
+        meta = r["metadata"]
+        excerpt = r["content"]
+        if len(excerpt) > 500:
+            excerpt = excerpt[:500] + "…"
+        lines.append(
+            f"--- Run {rid} (score: {r['score']:.3f}) ---\n"
+            f"status: {meta.get('status', '?')} | agent: {meta.get('agent_slug', '?')} | "
+            f"target: {meta.get('target_slug', '?')} | ended_at: {meta.get('ended_at', '?')} | "
+            f"cost: {meta.get('cost_usd', '?')}\n"
+            f"matched: {excerpt}\n"
+            f"→ call get_run_detail(run_id={rid!r}) for the full record\n"
+        )
+    return _tool_result("\n".join(lines))
+
+
 def _search_skills(query: str, n_results: int = 5) -> dict:
     if not query:
         return _tool_result("Please provide a search query.", is_error=True)
@@ -379,6 +491,9 @@ _HANDLERS = {
     "delete_knowledge_base": lambda a: _delete_knowledge_base(
         a.get("path", ""), a.get("_gateway_kb_index")),
     "search_skills": lambda a: _search_skills(a.get("query", ""), a.get("n_results", 5)),
+    "search_execution_history": lambda a: _search_execution_history(
+        a.get("query", ""), a.get("n_results", 5), a.get("status"),
+        a.get("agent_slug"), a.get("target_slug"), a.get("since_days"), a.get("run_id")),
     "load_skill": lambda a: _load_skill(a.get("name", "")),
 }
 

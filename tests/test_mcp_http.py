@@ -178,6 +178,67 @@ def test_a_scoped_delete_is_forced_under_the_scope_too(monkeypatch):
     assert deleted["path"] == "crispal/note.md"
 
 
+def test_the_exact_paths_that_leaked_on_2026_09_08(monkeypatch):
+    """Card 3d55bf3b-9510-81ea-9a4e-fcd0753602f4's acceptance, literally: the
+    two unprefixed paths crispal-codex actually wrote to the workspace root.
+
+    Neither is an escape attempt — that's the point. `_force_scope` handled
+    `../` correctly all along (the test above); what reached this code on
+    2026-09-08 was an ordinary relative path with NO kb_index beside it,
+    because the caller was on the gateway's unscoped root `/mcp` rather than
+    `/mcp/crispal-full`. These cases pin the enforcement half of the fix; the
+    routing half is pinned in aw-app-agents-platform-runners'
+    tests/test_codex_agent_scoped_mcp_config.py.
+    """
+    written = []
+    monkeypatch.setattr(mcp_http.kb_ops, "update",
+                        lambda path, content: written.append(path))
+
+    for leaked in ("docs/atendimento/politica-interna-trocas-e-devolucoes.md",
+                   "memory/reenvio-apos-devolucao-por-morada-incorreta.md"):
+        _call("update_knowledge_base",
+              {"path": leaked, "content": "x", "_gateway_kb_index": "crispal"})
+
+    assert written == [
+        "crispal/docs/atendimento/politica-interna-trocas-e-devolucoes.md",
+        "crispal/memory/reenvio-apos-devolucao-por-morada-incorreta.md",
+    ]
+
+
+def test_a_scope_prefix_is_a_path_boundary_not_a_string_prefix(monkeypatch):
+    """`crispal-evil/` starts with `crispal` as a STRING but is a different
+    folder — it must be forced under the scope, not waved through as already
+    in it."""
+    written = {}
+    monkeypatch.setattr(mcp_http.kb_ops, "update",
+                        lambda path, content: written.setdefault("path", path))
+
+    _call("update_knowledge_base",
+          {"path": "crispal-evil/x.md", "content": "x", "_gateway_kb_index": "crispal"})
+
+    assert written["path"] == "crispal/crispal-evil/x.md"
+
+
+def test_a_scoped_search_returns_nothing_from_the_leaked_repos(monkeypatch):
+    """The read half of the same incident: the leaking run's results carried
+    Repo: repos / docs / memory. Under kb_index="crispal" a search whose
+    candidates are all from those repos must come back as an explicit miss,
+    not as somebody else's documents."""
+    _fake_index(monkeypatch, [
+        _doc("docs", "atendimento/politica-interna-trocas-e-devolucoes.md"),
+        _doc("memory", "reenvio-apos-devolucao-por-morada-incorreta.md"),
+        _doc("repos", "agentic-workspace/src/config/aw.json"),
+    ])
+
+    result = _call("search_knowledge_base",
+                   {"query": "politica de trocas", "_gateway_kb_index": "crispal"})
+
+    assert result["isError"] is True
+    text = result["content"][0]["text"]
+    assert "in 'crispal/'" in text
+    assert "politica-interna" not in text and "reenvio-apos-devolucao" not in text
+
+
 def test_an_unscoped_write_keeps_the_path_it_was_given(monkeypatch):
     written = {}
     monkeypatch.setattr(mcp_http.kb_ops, "update",

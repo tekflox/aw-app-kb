@@ -21,6 +21,17 @@ jobs:
           python-version: "3.12"
       - name: Install deps
         run: pip install -r kb_app/requirements-dev.txt
+      # tests/validate_manifest.py falls back to a sibling aw-marketplace
+      # checkout for the canonical schema when this repo has no local
+      # schemas/ copy (by design — see that file's docstring). A fresh
+      # actions/checkout has no such sibling, unlike this workspace's own
+      # dev container where aw-marketplace already happens to be checked
+      # out next to every app repo — that's why this passed locally and
+      # failed the first time build.yml actually ran on a real runner.
+      - uses: actions/checkout@v4
+        with:
+          repository: tekflox/aw-marketplace
+          path: ../aw-marketplace
       - name: Validate manifest
         run: python3 tests/validate_manifest.py
       - name: Test suite + coverage gate

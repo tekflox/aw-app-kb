@@ -1,0 +1,49 @@
+# pre-commit — fast local subset of CI, per docs/standards/pipeline-testing.md §6.
+#
+# NOT a replacement for CI: hooks are bypassable (--no-verify) and are not
+# installed on a fresh clone until `pre-commit install` is run. The test
+# suite is deliberately NOT a hook here — see §6's three reasons (it can't
+# run against a real Postgres, this workspace's sessions share one working
+# tree, and CI is already the real gate).
+#
+# Install once per clone:
+#   pip install -r kb_app/requirements-dev.txt && pre-commit install
+# ruff-format is deliberately NOT enabled here yet: this codebase has never
+# been ruff-formatted, and ruff-format reformats a hook's target file in
+# full (not just the touched lines) — even a 2-line logic fix in
+# kb_app/kb_ops.py came back as a 336-line diff. Turning the hook on now
+# would make the FIRST future edit to any existing file balloon into an
+# unrelated whole-file reformat. Needs a deliberate one-time `ruff format .`
+# commit of its own before this hook is safe to enable — see the pilot
+# card's report. `ruff check --fix` is safe today: it only touches the
+# specific lines it flags.
+repos:
+  - repo: https://github.com/astral-sh/ruff-pre-commit
+    rev: v0.9.9
+    hooks:
+      - id: ruff
+        args: [--fix]
+
+  - repo: local
+    hooks:
+      - id: pylint-errors-only
+        name: pylint (E-class only, blocking — same gate as CI)
+        entry: pylint --disable=all --enable=E --disable=E0401,E1101
+        language: system
+        types: [python]
+        files: ^kb_app/
+
+      - id: validate-manifest
+        name: validate aw-app.json
+        entry: python3 tests/validate_manifest.py
+        language: system
+        pass_filenames: false
+        files: ^aw-app\.json$
+
+  - repo: https://github.com/pre-commit/pre-commit-hooks
+    rev: v6.0.0
+    hooks:
+      - id: trailing-whitespace
+      - id: end-of-file-fixer
+      - id: check-added-large-files
+      - id: check-merge-conflict

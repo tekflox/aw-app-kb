@@ -27,10 +27,10 @@ import re
 import sys
 from datetime import datetime
 
+from . import kb_pg as _kb
+
 COMMAND = "knowledge-base"
 DESCRIPTION = "Manage the knowledge base (build, search, map)"
-
-from . import kb_pg as _kb
 
 # Persistent volume (see aw-app.json's "data" volume -> /app/data) — survives
 # container recreation, unlike the rest of the image.
@@ -1093,11 +1093,9 @@ def _map_repo(target, force=False):
     out_dir = os.path.join(KB_DIR, "mapped_folders", repo_name)
     os.makedirs(out_dir, exist_ok=True)
 
-    # Code walks skip the standard noise; HTML walks skip the same set
-    # plus generated-HTML dirs (coverage reports, recordings, etc.) that
-    # would otherwise flood the KB with low-signal content.
+    # Code walks skip the standard noise; HTML files are additionally
+    # filtered per-directory below via HTML_SKIP_DIRS (in_html_skip).
     skip_dirs = SKIP_DIRS | extra_skips
-    html_skip_dirs = skip_dirs | HTML_SKIP_DIRS
 
     total_new = 0
     total_updated = 0

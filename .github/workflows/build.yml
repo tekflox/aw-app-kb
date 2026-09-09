@@ -1,6 +1,14 @@
 name: Build
 
+# Push/PR-triggered quality gate: coverage ratchet + blocking pylint E-class,
+# per docs/standards/pipeline-testing.md (pilot card). The shared
+# tekflox/aw-marketplace release workflow (release.yml) does not have these
+# steps yet — that is Phase 2 of the standard's rollout, a separate repo —
+# so until then this repo's own gate lives here.
 on:
+  push:
+    branches: [main]
+  pull_request:
   workflow_dispatch: {}
 
 jobs:
@@ -15,8 +23,17 @@ jobs:
         run: pip install -r kb_app/requirements-dev.txt
       - name: Validate manifest
         run: python3 tests/validate_manifest.py
-      - name: Test suite
-        run: PYTHONPATH=. pytest tests/ -q
+      - name: Test suite + coverage gate
+        # fail_under is read from pyproject.toml's [tool.coverage.report] —
+        # a one-way ratchet, see docs/standards/pipeline-testing.md §4.2.
+        run: PYTHONPATH=. pytest --cov=kb_app --cov-report=term-missing tests/ -q
+      - name: Lint (pylint E-class, blocking)
+        # --errors-only per docs/standards/pipeline-testing.md §5.2, minus
+        # E0401 (lazy-import false positives) and E1101 (astroid can't
+        # infer psycopg3's generically-typed Connection through this
+        # repo's lazy-import + module-global-Optional pattern — verified
+        # false positive on every flagged line, see the pilot card report).
+        run: pylint kb_app --disable=all --enable=E --disable=E0401,E1101
 
   frontend:
     runs-on: [self-hosted, aw-baremetal]

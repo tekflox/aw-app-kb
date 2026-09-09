@@ -1,0 +1,23 @@
+[tool.coverage.run]
+source = ["kb_app"]
+omit = ["*/__pycache__/*"]
+
+[tool.coverage.report]
+# Exemptions 1-4 from docs/standards/pipeline-testing.md §3 (glue,
+# properties, dunder reprs, pure re-exports) — lifted from
+# aw-backend/src/tests/.coveragerc, the precedent that section names.
+exclude_lines = [
+    "pragma: no cover",
+    "def __repr__",
+    "def __str__",
+    "if __name__ == .__main__",
+    "raise NotImplementedError",
+    "pass",
+    "except ImportError",
+]
+show_missing = true
+precision = 1
+# One-way ratchet per §4.2: measured baseline at adoption (2026-09-09),
+# after this card's own new tests (self_register.py, main.py). May only
+# rise — see docs/standards/pipeline-testing.md §4.2.
+fail_under = 53

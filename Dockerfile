@@ -5,7 +5,7 @@
 # bundled into one image rather than a separate sidecar container.
 
 # ---- UI build stage ---------------------------------------------------
-FROM node:20-slim AS ui-build
+FROM node:24-slim AS ui-build
 WORKDIR /ui
 COPY ui/package.json ui/package-lock.json* ./
 RUN npm install --no-audit --no-fund

@@ -85,8 +85,9 @@
         "title": "Knowledge Base",
         "icon": "book-open",
         "body": {
-          "type": "declarative",
-          "spec": "windows/main.json"
+          "type": "managed_app",
+          "kind": "web",
+          "path": "/"
         }
       }
     ],

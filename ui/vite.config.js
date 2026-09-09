@@ -6,7 +6,7 @@ import tailwindcss from '@tailwindcss/vite'
 // build target the way Tier-1 apps have (see aw-app-template's dual
 // plugin/standalone modes). aw-workspace reverse-proxies the whole
 // container at /api/apps/kb (stripping that prefix before it reaches us —
-// see aw-app.json's windows/main.json iframe + src/client.js's relative
+// see aw-app.json's kb.main managed_app window + src/client.js's relative
 // fetch paths), so a single ordinary app build is enough.
 export default defineConfig({
   base: './',

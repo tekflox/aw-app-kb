@@ -3,7 +3,7 @@
 // Ported from agentic-workspace's src/app/src/hooks/useComponentStatus.js
 // (the kb* functions). This app is served in its own document — either
 // directly at "/" (standalone/dev) or through aw-workspace's reverse
-// proxy at "/api/apps/kb/" (see windows/main.json's iframe widget) —
+// proxy at "/api/apps/kb/" (see aw-app.json's kb.main managed_app window) —
 // Starlette strips that mount prefix before the request reaches this
 // container (src/apps/proxy.py), so RELATIVE paths (no leading "/") are
 // what make both cases resolve correctly: the browser resolves them

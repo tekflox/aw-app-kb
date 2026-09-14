@@ -5,15 +5,15 @@ name: Publish image
 # ghcr.io/<owner>/aw-app-kb. Manual trigger only (no automatic GHA runs —
 # cost/quota conscious, mirrors tekflox/aw-mcp-gateway's publish.yml).
 #
-#   gh workflow run publish.yml                        # amd64
-#   gh workflow run publish.yml -f include_arm64=true  # + linux/arm64 (QEMU)
+#   gh workflow run publish.yml                          # amd64 + linux/arm64 (default)
+#   gh workflow run publish.yml -f include_arm64=false   # amd64 only (skip QEMU arm64)
 on:
   workflow_dispatch:
     inputs:
       include_arm64:
         description: 'Also build linux/arm64 (QEMU emulation; slower)'
         type: boolean
-        default: false
+        default: true
 
 concurrency:
   group: publish-aw-app-kb-${{ github.ref }}

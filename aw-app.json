@@ -113,6 +113,7 @@
       {
         "name": "Sync: Knowledge-Base",
         "type": "terminal",
+        "enabled": true,
         "prompt": "aw-workspace-cli knowledge-base --map-all && aw-workspace-cli knowledge-base --build",
         "schedules": [
           {

@@ -67,7 +67,8 @@
   "permissions": [
     "containers:manage",
     "fs:workspace-data",
-    "fs:workspace-read"
+    "fs:workspace-read",
+    "tasks:contribute"
   ],
   "contributes": {
     "nav": [
@@ -107,6 +108,19 @@
         "id": "aw-kb-curator",
         "path": "skills/aw-kb-curator/SKILL.md"
       }
+    ],
+    "tasks": [
+      {
+        "name": "Sync: Knowledge-Base",
+        "type": "terminal",
+        "prompt": "aw-workspace-cli knowledge-base --map-all && aw-workspace-cli knowledge-base --build",
+        "schedules": [
+          {
+            "kind": "cron",
+            "expr": "*/30 * * * *"
+          }
+        ]
+      }
     ]
   },
   "config_schema": {
@@ -139,6 +153,15 @@
     },
     "required": []
   },
-  "dependencies": {},
+  "dependencies": {
+    "apps": [
+      {
+        "id": "tasks",
+        "version": ">=0.1.0",
+        "required": false,
+        "reason": "Provides the contributes.tasks surface that seeds the 'Sync: Knowledge-Base' schedule. Non-required: the declaration is held and replayed when a provider appears, so this app installs cleanly either way and the sync stays runnable by hand in the meantime."
+      }
+    ]
+  },
   "migrations": {}
 }

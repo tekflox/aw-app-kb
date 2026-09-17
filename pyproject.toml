@@ -17,7 +17,14 @@ exclude_lines = [
 ]
 show_missing = true
 precision = 1
-# One-way ratchet per §4.2: measured baseline at adoption (2026-09-09),
-# after this card's own new tests (self_register.py, main.py). May only
-# rise — see docs/standards/pipeline-testing.md §4.2.
-fail_under = 53
+# One-way ratchet per §4.2: measured baseline at adoption (2026-09-09) was
+# 53% (this card's own new tests for self_register.py/main.py). Raised to
+# 80 (2026-09-17) after real behavioral tests for kb_ops.py (31%->91%,
+# tests/test_kb_ops_pipeline.py — build/search/update/delete, every code-map
+# extractor, the folder-mapping walker, the CLI dispatcher) and kb_pg.py
+# (28%->100%, tests/test_kb_pg.py, same fake-connection pattern as
+# exec_pg.py's tests) brought the measured total to 85.7% — the gate is
+# still pinned below what was actually achieved, banking margin against the
+# ratchet's ban on lowering it. May only rise — see
+# docs/standards/pipeline-testing.md §4.2.
+fail_under = 80

@@ -40,7 +40,25 @@ jobs:
       - name: Test suite + coverage gate
         # fail_under is read from pyproject.toml's [tool.coverage.report] —
         # a one-way ratchet, see docs/standards/pipeline-testing.md §4.2.
-        run: PYTHONPATH=. pytest --cov=kb_app --cov-report=term-missing tests/ -q
+        # html + xml reports are generated alongside the blocking
+        # term-missing one specifically so the html report can be published
+        # as a downloadable artifact below — this step still fails (and
+        # skips the upload) if coverage drops below fail_under.
+        run: |
+          PYTHONPATH=. pytest --cov=kb_app --cov-report=term-missing \
+            --cov-report=html --cov-report=xml tests/ -q
+      - name: Upload coverage report artifact
+        # Downloadable straight from the Actions run's Summary page — no
+        # local pytest run needed to see what's covered. if: always() so a
+        # failing coverage gate still publishes the report that explains why.
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: coverage-report
+          path: |
+            htmlcov/
+            coverage.xml
+          retention-days: 30
       - name: Lint (pylint E-class, blocking)
         # --errors-only per docs/standards/pipeline-testing.md §5.2, minus
         # E0401 (lazy-import false positives) and E1101 (astroid can't

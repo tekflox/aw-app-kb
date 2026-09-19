@@ -301,6 +301,7 @@ with zero actions taken:
 ```bash
 curl -s -m 15 -X POST http://172.18.0.1:10014/api/telegram/report \
   -H 'Content-Type: application/json' \
+  -H "X-Aw-Run-Id: $AW_RUN_ID" \
   -d "$(python3 -c '
 import json, sys
 print(json.dumps({"title": sys.argv[1], "text": sys.argv[2]}))

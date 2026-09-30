@@ -168,6 +168,24 @@ def test_upsert_many_writes_each_doc_and_commits_once(fake_conn):
     assert fake_conn.committed == 1
 
 
+def test_upsert_strips_nul_bytes_before_insert(fake_conn):
+    """Postgres TEXT rejects \\x00 outright (DataError) — a PDF-extraction
+    source document carrying one used to crash the whole kb_ops._build()
+    walk before it ever reached the stale-doc prune. Confirmed live
+    2026-09-30 against 21 real documents under
+    mapped_folders/repos/aw-app-uc-phd/estudo_geral/."""
+    kb_pg.upsert("doc-1", "hello\x00world", {"repo": "x"})
+    _, params = fake_conn.executed[0]
+    assert params[1] == "helloworld"
+
+
+def test_upsert_many_strips_nul_bytes_before_insert(fake_conn):
+    docs = [("d1", "a\x00b", {})]
+    kb_pg.upsert_many(docs)
+    inserts = [e for e in fake_conn.executed if e[0].strip().startswith("INSERT")]
+    assert inserts[0][1][1] == "ab"
+
+
 # ---------------------------------------------------------------------------
 # delete / delete_many
 # ---------------------------------------------------------------------------

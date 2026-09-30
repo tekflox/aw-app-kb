@@ -94,6 +94,9 @@ class _FakeKB:
         self.upserted.extend(docs)
         return len(docs)
 
+    def upsert(self, doc_id, content, metadata):
+        self.upserted.append((doc_id, content, metadata))
+
     def delete_many(self, ids):
         self.deleted_ids.extend(ids)
         return len(ids)
@@ -216,6 +219,42 @@ def test_build_batches_upserts_past_batch_size(kb_dir, monkeypatch):
     kb_ops._build(force=False)
 
     assert len(fake.upserted) == 20
+
+
+def test_build_survives_a_poison_document_and_still_prunes_stale_docs(kb_dir, monkeypatch, capsys):
+    """Regression for bug:kb-index-retains-deleted-notion-documents. A batch
+    upsert that raises (real cause: a Postgres DataError on a NUL byte from a
+    PDF-extraction document under mapped_folders/) used to propagate out of
+    _build() entirely, so the stale-prune below it (the actual fix for a
+    deleted doc lingering in the index) never ran — for ANY root, not just
+    the one with the bad document. This asserts the walk now survives a
+    poisoned batch, indexes the good documents in it, and still reaches the
+    prune step."""
+    (kb_dir / "good.md").write_text("---\nchecksum: c1\n---\nfine content")
+    (kb_dir / "poison.md").write_text("---\nchecksum: c2\n---\nbad content")
+
+    class _FlakyKB(_FakeKB):
+        def upsert_many(self, docs):
+            if any("bad content" in content for _, content, _ in docs):
+                raise RuntimeError("PostgreSQL text fields cannot contain NUL (0x00) bytes")
+            return super().upsert_many(docs)
+
+        def upsert(self, doc_id, content, metadata):
+            if "bad content" in content:
+                raise RuntimeError("PostgreSQL text fields cannot contain NUL (0x00) bytes")
+            super().upsert(doc_id, content, metadata)
+
+    fake = _FlakyKB(existing={"gone.md": {"checksum": "sha256:x"}})
+    monkeypatch.setattr(kb_ops, "_kb", fake)
+
+    kb_ops._build(force=False)
+
+    assert [d[0] for d in fake.upserted] == ["good.md"]
+    assert fake.deleted_ids == ["gone.md"]
+    out = capsys.readouterr().out
+    assert "WARN: batch upsert failed" in out
+    assert "WARN: skipping poison.md" in out
+    assert "1 failed" in out
 
 
 # ---------------------------------------------------------------------------

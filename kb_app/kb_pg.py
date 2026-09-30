@@ -233,8 +233,20 @@ def search(query: str, n_results: int = 5) -> list[dict[str, Any]]:
         return []
 
 
+def _clean_text(content: str) -> str:
+    """Postgres TEXT columns reject NUL (0x00) bytes outright (DataError),
+    which a PDF-text-extraction source document can carry through as binary
+    noise. Stripping here — the one place every write path (build/update/map)
+    converges — means a single such document degrades to "one document with
+    a byte stripped" instead of crashing the whole caller. See kb_ops.py's
+    _build(), which depends on this call never raising: it walks the entire
+    tree in one pass and only prunes stale rows after every batch finishes."""
+    return content.replace("\x00", "") if "\x00" in content else content
+
+
 def upsert(doc_id: str, content: str, metadata: dict) -> None:
     """Embed and upsert one document (INSERT … ON CONFLICT DO UPDATE)."""
+    content = _clean_text(content)
     vs = _vec_str(_embed_docs([content])[0])
     conn = _get_conn()
     conn.execute(
@@ -266,6 +278,7 @@ def upsert_many(docs: list[tuple[str, str, dict]]) -> int:
     """
     if not docs:
         return 0
+    docs = [(doc_id, _clean_text(content), metadata) for doc_id, content, metadata in docs]
     texts = [d[1] for d in docs]
     vectors = _embed_docs(texts)
     conn = _get_conn()

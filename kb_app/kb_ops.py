@@ -129,15 +129,33 @@ def _build(force=False):
     updated = 0
     unchanged = 0
     removed = 0
+    failed = 0
     seen_ids: set[str] = set()
     batch: list[tuple[str, str, dict]] = []
     BATCH_SIZE = 16  # embed + upsert in chunks to limit memory use
 
     def _flush_batch():
-        nonlocal added, updated
+        # A batch upsert must never propagate: this whole walk only reaches
+        # the stale-prune below (the actual fix for a deleted doc lingering
+        # in the index) if it runs to completion. One document that
+        # Postgres/the embedder chokes on — seen live 2026-09-30, 21 PDF
+        # extractions with embedded NUL bytes — used to abort the entire
+        # build here and silently skip the prune for every root, not just
+        # the one with the bad document. Retry per-document and skip only
+        # the offender.
+        nonlocal added, updated, failed
         if not batch:
             return
-        _kb.upsert_many(batch)
+        try:
+            _kb.upsert_many(batch)
+        except Exception as exc:
+            print(f"  WARN: batch upsert failed ({exc}); retrying {len(batch)} document(s) individually")
+            for doc_id, content, metadata in batch:
+                try:
+                    _kb.upsert(doc_id, content, metadata)
+                except Exception as doc_exc:
+                    print(f"  WARN: skipping {doc_id}: {doc_exc}")
+                    failed += 1
         batch.clear()
 
     for root, dirs, files in os.walk(KB_DIR):
@@ -192,7 +210,8 @@ def _build(force=False):
         removed = _kb.delete_many(list(stale))
 
     total = _kb.count()
-    print(f"\nBuild complete: {added} added, {updated} updated, {unchanged} unchanged, {removed} removed")
+    print(f"\nBuild complete: {added} added, {updated} updated, {unchanged} unchanged, {removed} removed"
+          + (f", {failed} failed" if failed else ""))
     print(f"Total documents in index: {total}")
 
 

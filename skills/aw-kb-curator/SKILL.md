@@ -66,10 +66,18 @@ For each flagged file decide:
 Compare any `skills/<name>.md` KB entries against the live, actually-installed
 skills index (Part 3's source of truth):
 
-```bash
-curl -s -H "X-AW-Local-Cli-Token: $(cat /opt/aw-workspace/.aw-workspace/cli-token)" \
-  http://127.0.0.1:9030/api/apps/-/skills
+```python
+import sys; sys.path.insert(0, '/opt/aw-workspace')
+from src.cli.local_client import request
+status, body = request('GET', '/api/apps/-/skills')
 ```
+
+(`X-AW-Local-Cli-Token` is dead — confirmed returning 401 across 8+ audits
+since 2026-08-26. `local_client.request()` authenticates with the workspace
+API key instead and self-heals a stale one; use it whenever this session has
+filesystem/Python access to `/opt/aw-workspace`. Fall back to curl with
+`X-Api-Key: $(grep AW_WORKSPACE_API_KEY ~/.aw-workspace/.env | cut -d= -f2)`
+only when it doesn't.)
 
 A KB doc describing a skill with no matching live entry → mark orphan to delete.
 
@@ -136,10 +144,15 @@ for `feedback`/`project` types).
 
 ### Live skills, source of truth
 
-```bash
-curl -s -H "X-AW-Local-Cli-Token: $(cat /opt/aw-workspace/.aw-workspace/cli-token)" \
-  http://127.0.0.1:9030/api/apps/-/skills
+```python
+import sys; sys.path.insert(0, '/opt/aw-workspace')
+from src.cli.local_client import request
+status, body = request('GET', '/api/apps/-/skills')
 ```
+
+(Same dead-`X-AW-Local-Cli-Token` note as Part 1 Step 3 applies here — use
+`local_client.request()` when this session has filesystem/Python access to
+`/opt/aw-workspace`, curl + `X-Api-Key` otherwise.)
 
 Returns every `contributes.skills` entry across installed apps: `app`, `id`,
 `description`, `skill_md_path`, `registered`. `registered: false` means the

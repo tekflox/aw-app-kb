@@ -3,7 +3,7 @@ repo: architecture
 path: docs/architecture/aw-app-kb.md
 source: generated
 edited: false
-checksum: sha256:25a8761bfafcb1b5e31b1b2792a29a20fad8bb8a07303276b090d9c193ad6063
+checksum: sha256:3e4cd445f7414b487f6c7604898955083482128f20e414826fa838f932bff562
 ---
 # Knowledge Base
 
@@ -15,11 +15,13 @@ checksum: sha256:25a8761bfafcb1b5e31b1b2792a29a20fad8bb8a07303276b090d9c193ad606
 Semantic search over project docs and skills, backed by Postgres/pgvector. Ported from the agentic-workspace monolith's Knowledge Base — file browser/editor, semantic + text search, code-map build jobs, and an MCP surface (search/update/delete_knowledge_base, search/load_skill) that aw-mcp-gateway picks up automatically.
 
 ## Connections
+- `other` → **aw-app-tasks** — Provides the contributes
 - `stdio-mcp` → **mcp-gateway** — MCP surface aggregated by the gateway
 
 ## MCP tools
 - `delete_knowledge_base`
 - `load_skill`
+- `search_execution_history`
 - `search_knowledge_base`
 - `search_skills`
 - `update_knowledge_base`

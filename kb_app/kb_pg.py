@@ -42,6 +42,7 @@ Schema (auto-created on first use)
 
 from __future__ import annotations
 
+import hashlib
 import json
 import logging
 import os
@@ -200,11 +201,58 @@ def count() -> int:
         return 0
 
 
+#: Over-fetch factor `search()` asks Postgres for before collapsing
+#: byte-identical content, so a duplicate-heavy result set can still fill
+#: `n_results` after the collapse — same reason aw-knowledgeable's
+#: `vector_overfetch_window()` over-fetches before its own chunk-text dedup
+#: (retrieval-dedup card). Measured against this store's live corpus
+#: 2026-10-08 (the three questions aw-knowledgeable's own card measured):
+#: 0 duplicates in 10 slots on all three — this is a safety net for a defect
+#: not currently observed here, not a fix for one.
+_DEDUP_OVERFETCH_FACTOR = 4
+
+
+def _dedup_key(content: str) -> str:
+    return hashlib.sha256(" ".join((content or "").split()).encode("utf-8")).hexdigest()
+
+
+def _collapse_duplicate_content(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Collapse rows with byte-identical `content` (after whitespace
+    normalization) onto the highest-scoring one, same rule as
+    aw-knowledgeable's `collapse_duplicate_chunks` applied to this store's
+    flat one-row-per-document shape (no chunk/document split here, so no
+    per-document cap to also enforce). Collapsed rows are attached to the
+    survivor as `also_in: [{id, score}]` rather than dropped — `also_in` is
+    OMITTED (not `[]`) on a row nothing collapsed onto, so a result set with
+    no duplicates is byte-identical to what `search()` always returned."""
+    kept: dict[str, dict[str, Any]] = {}
+    kept_order: list[str] = []
+    also_in: dict[str, list[dict[str, Any]]] = {}
+    for row in sorted(rows, key=lambda r: r["score"], reverse=True):
+        key = _dedup_key(row["content"])
+        if key in kept:
+            also_in.setdefault(key, []).append({"id": row["id"], "score": row["score"]})
+            continue
+        kept[key] = row
+        kept_order.append(key)
+    result = []
+    for key in kept_order:
+        row = kept[key]
+        if key in also_in:
+            row = dict(row, also_in=also_in[key])
+        result.append(row)
+    return result
+
+
 def search(query: str, n_results: int = 5) -> list[dict[str, Any]]:
     """Cosine-similarity search over embedded documents.
 
-    Returns a list of dicts: {id, content, metadata, score}
-    where score is in [0, 1] (1 = identical).
+    Returns a list of dicts: {id, content, metadata, score}, plus `also_in`
+    on a row that absorbed one or more byte-identical-content duplicates
+    (retrieval-dedup card's collapse-not-drop rule, applied here as a cheap
+    safety net), where score is in [0, 1] (1 = identical). Over-fetches by
+    `_DEDUP_OVERFETCH_FACTOR` and collapses BEFORE cutting to `n_results`,
+    so a duplicate-heavy result never silently returns fewer than asked.
     """
     try:
         vs = _vec_str(_embed_query(query))
@@ -216,9 +264,9 @@ def search(query: str, n_results: int = 5) -> list[dict[str, Any]]:
             ORDER  BY embedding <=> %s::vector
             LIMIT  %s
             """,
-            (vs, vs, n_results),
+            (vs, vs, n_results * _DEDUP_OVERFETCH_FACTOR),
         ).fetchall()
-        return [
+        raw = [
             {
                 "id": r[0],
                 "content": r[1],
@@ -227,6 +275,7 @@ def search(query: str, n_results: int = 5) -> list[dict[str, Any]]:
             }
             for r in rows
         ]
+        return _collapse_duplicate_content(raw)[:n_results]
     except Exception as exc:
         _log.error("kb_pg: search error: %s", exc)
         _reset_conn()

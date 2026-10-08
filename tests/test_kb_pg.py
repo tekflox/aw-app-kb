@@ -126,10 +126,29 @@ def test_search_defaults_metadata_to_empty_dict_when_null(fake_conn):
     assert results[0]["metadata"] == {}
 
 
-def test_search_passes_n_results_as_limit(fake_conn):
+def test_search_passes_an_overfetched_limit_not_n_results(fake_conn):
+    # retrieval-dedup card: the SQL LIMIT is the over-fetch window the
+    # content-dedup collapse runs on, not `n_results` itself — the cut to
+    # `n_results` happens in Python, after collapsing.
     kb_pg.search("query", n_results=3)
     sql, params = fake_conn.executed[0]
-    assert params[-1] == 3
+    assert params[-1] == 3 * kb_pg._DEDUP_OVERFETCH_FACTOR
+
+
+def test_search_collapses_byte_identical_content_onto_the_highest_score(fake_conn):
+    fake_conn.queue_result(
+        rows=[
+            ("doc-a", "shared text", {}, 0.80),
+            ("doc-b", "shared text", {}, 0.90),
+            ("doc-c", "distinct text", {}, 0.70),
+        ]
+    )
+    results = kb_pg.search("query", n_results=2)
+    assert len(results) == 2
+    assert results[0]["id"] == "doc-b", "highest-scoring duplicate must survive"
+    assert results[0]["also_in"] == [{"id": "doc-a", "score": 0.80}]
+    assert results[1]["id"] == "doc-c"
+    assert "also_in" not in results[1], "a row nothing collapsed onto must be unchanged"
 
 
 def test_search_swallows_errors_and_resets(monkeypatch, fake_conn):

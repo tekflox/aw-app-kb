@@ -55,8 +55,20 @@ def _demux_stream(recv) -> None:
     sys.stdout.flush()
 
 
+def _print_help() -> int:
+    """Static help — must never need a running container to print, since
+    --help is exactly what someone reaches for when the container is down."""
+    print(DESCRIPTION)
+    print()
+    print(__doc__.split("Usage:")[1].strip())
+    return 0
+
+
 def run(args: list[str]) -> int:
     args = list(args or [])
+
+    if "-h" in args or "--help" in args:
+        return _print_help()
 
     socket = os.environ.get("AW_CONTAINER_SOCKET")
     if not socket:

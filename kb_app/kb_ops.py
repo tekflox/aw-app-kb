@@ -7,6 +7,12 @@ it as a background subprocess (see routes.py's ``_run_job``) — the
 520 MB fastembed model must NOT be loaded into the main FastAPI event
 loop's process.
 
+RELEASE_GATE_PROOF_3f65bf3b_20261011: this file sits inside release.yml's
+changed-paths gate (kb_app/); this line was planted to verify a real
+code-touching push triggers publish.yml automatically and lands in the
+running image — see Kanban card 3f65bf3b-9510-81f1-9c5e-cc2fdde8710c.
+Safe to remove once confirmed.
+
 Usage:
     python -m kb_app.kb_ops --build             # import changed docs into pgvector
     python -m kb_app.kb_ops --search "how to configure redir"

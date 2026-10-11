@@ -86,7 +86,13 @@ jobs:
 
   release:
     needs: [changed-paths, publish]
-    if: always() && needs.changed-paths.result == 'success' && needs.publish.result != 'failure'
+    # publish.yml's own `concurrency: cancel-in-progress` group is honored
+    # even across workflow_call invocations, so two close pushes to main can
+    # have push A's publish job cancelled by push B's. A cancelled job's
+    # `result` is 'cancelled', not 'failure' — excluding only 'failure' let
+    # push A's release proceed and advertise a version whose image build
+    # never finished. Require success-or-skipped instead.
+    if: always() && needs.changed-paths.result == 'success' && (needs.publish.result == 'success' || needs.publish.result == 'skipped')
     # Same reusable release workflow every other TekFlox aw-app-* repo uses
     # (aw-mcp-gateway, aw-app-template, ...) — bumps aw-app.json's version,
     # tags, and syncs the marketplace catalog entry. Runs LAST on purpose,

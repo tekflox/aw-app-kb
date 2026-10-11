@@ -2,7 +2,7 @@
   "manifest_version": 1,
   "id": "kb",
   "name": "Knowledge Base",
-  "version": "0.38.0",
+  "version": "0.39.0",
   "description": "Semantic search over project docs and skills, backed by Postgres/pgvector. Ported from the agentic-workspace monolith's Knowledge Base \u2014 file browser/editor, semantic + text search, code-map build jobs, and an MCP surface (search/update/delete_knowledge_base, search/load_skill) that aw-mcp-gateway picks up automatically.",
   "icon": "book-open",
   "tier": "container",
@@ -107,7 +107,7 @@
       {
         "id": "aw-kb-curator",
         "path": "skills/aw-kb-curator/SKILL.md",
-        "description": "Curate this workspace's knowledge base, agent memory, and skill health — review KB docs for staleness/duplicates/gaps, audit auto-memory entries for conflicts and drift, and flag skills with low retro scores or no recent use. Use when the user says \"revisa o KB\", \"curate knowledge base\", \"kb-curator\", \"revisa a memória\" or when running a scheduled knowledge audit."
+        "description": "Curate this workspace's knowledge base, agent memory, and skill health \u2014 review KB docs for staleness/duplicates/gaps, audit auto-memory entries for conflicts and drift, and flag skills with low retro scores or no recent use. Use when the user says \"revisa o KB\", \"curate knowledge base\", \"kb-curator\", \"revisa a mem\u00f3ria\" or when running a scheduled knowledge audit."
       }
     ],
     "knowledge": {

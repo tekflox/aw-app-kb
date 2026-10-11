@@ -1122,6 +1122,8 @@ def _map_repo(target, force=False):
     total_empty = 0
     total_html = 0
     total_docs = 0
+    total_eligible = 0  # files the walk actually matched by extension, pass or fail
+    seen_outputs: set[str] = set()  # out_rel for every source file still present
 
     print(f"Mapping {repo_dir} -> {out_dir}")
     if extra_skips:
@@ -1149,9 +1151,20 @@ def _map_repo(target, force=False):
             is_doc = ext in DOC_EXTENSIONS
             if not (is_code or is_html or is_doc):
                 continue
+            total_eligible += 1
 
             src_path = os.path.join(root, fname)
             rel_path = os.path.relpath(src_path, repo_dir)
+
+            # A .md doc keeps its own name: appending another .md would make
+            # the KB show "SKILL.md.md".
+            out_rel = rel_path if (is_doc and ext == ".md") else rel_path + ".md"
+            out_path = os.path.join(out_dir, out_rel)
+            # The source file is still here, whatever happens below — mark it
+            # seen BEFORE any read/skip/error path so the prune pass after
+            # the walk never treats "file didn't change" or "file failed to
+            # read this one time" as "file no longer exists".
+            seen_outputs.add(out_rel)
 
             try:
                 with open(src_path, encoding="utf-8", errors="replace") as f:
@@ -1164,11 +1177,6 @@ def _map_repo(target, force=False):
                 continue
 
             checksum = _sha256(source)
-
-            # A .md doc keeps its own name: appending another .md would make
-            # the KB show "SKILL.md.md".
-            out_rel = rel_path if (is_doc and ext == ".md") else rel_path + ".md"
-            out_path = os.path.join(out_dir, out_rel)
 
             if os.path.isfile(out_path) and not force:
                 try:
@@ -1233,13 +1241,84 @@ def _map_repo(target, force=False):
             }
             _write_kb_file(out_path, meta, content)
 
+    total_pruned = _prune_stale_mapped_files(out_dir, seen_outputs, total_eligible)
+
     print(f"\nCode map for {repo_name}:")
     print(f"  {total_new} new, {total_updated} updated, {total_skipped} unchanged, {total_empty} skipped (empty/no structure)")
     if total_html:
         print(f"  {total_html} HTML document(s) converted to Markdown")
     if total_docs:
         print(f"  {total_docs} Markdown/text document(s) carried through as-is")
+    if total_pruned:
+        print(f"  {total_pruned} stale output file(s) removed (source no longer exists)")
     print(f"  Output: {out_dir}")
+
+
+def _prune_stale_mapped_files(out_dir, seen_outputs, total_eligible):
+    """Delete output files under ``out_dir`` whose source file is gone.
+
+    ``_prune_unmapped_output`` only catches a whole mapped folder being
+    unmapped; a file deleted FROM a folder that is still mapped was never
+    caught by anything, so it stayed in ``mapped_folders/`` — and in the
+    pgvector index via the next ``--build`` — forever. That is exactly how
+    57 ghost docs ended up live under ``mapped_folders/docs/architecture/``
+    after ``docs/architecture/`` itself was retired (2026-10-11): the folder
+    `docs` is still mapped, so `_prune_unmapped_output` never looked at it.
+
+    Guarded against the failure mode this invites: if the source walk this
+    run matched zero eligible files (``total_eligible == 0``) while output
+    already exists, that is far more likely a transient/empty scan (an
+    unmounted bind, a momentarily-unreadable directory) than every file in
+    the folder having been deleted in the same instant. Treat it as a
+    failed scan and skip pruning entirely rather than wiping real content —
+    an exact-mirror prune driven by a scan that silently returned nothing is
+    how a sync becomes a data-loss event. A file marked human-``edited`` is
+    left alone even if its source is gone, same as the live-sync skip above:
+    it is no longer "generated output" once a human has touched it.
+    """
+    existing = [
+        os.path.relpath(os.path.join(root, fname), out_dir)
+        for root, _dirs, files in os.walk(out_dir)
+        for fname in files
+        if fname.endswith(".md")
+    ]
+    if not existing:
+        return 0
+
+    if total_eligible == 0:
+        print(f"  WARN: source scan matched 0 eligible file(s) but {len(existing)} "
+              f"output file(s) already exist under {out_dir} — treating this as a "
+              f"failed or transient scan, not a mass deletion. Skipping prune.")
+        return 0
+
+    stale = [rel for rel in existing if rel not in seen_outputs]
+    if not stale:
+        return 0
+
+    pruned = 0
+    for rel in stale:
+        path = os.path.join(out_dir, rel)
+        try:
+            with open(path) as f:
+                meta, _ = _parse_frontmatter(f.read())
+            if meta.get("edited") and meta.get("edited") is not False:
+                continue
+        except Exception:
+            pass
+        try:
+            os.remove(path)
+            pruned += 1
+        except OSError as e:
+            print(f"  could not remove stale {rel}: {e}")
+
+    for root, _dirs, _files in os.walk(out_dir, topdown=False):
+        if root != out_dir and not os.listdir(root):
+            try:
+                os.rmdir(root)
+            except OSError:
+                pass
+
+    return pruned
 
 
 

@@ -733,6 +733,100 @@ def test_map_repo_skips_html_inside_html_skip_dirs(repo_and_kb):
 
 
 # ---------------------------------------------------------------------------
+# _map_repo stale-file prune — a file deleted INSIDE a still-mapped folder
+# (kb:mapped-folder-sync-never-prunes-deleted-files)
+# ---------------------------------------------------------------------------
+
+def test_map_repo_prunes_output_for_a_file_deleted_from_a_still_mapped_folder(repo_and_kb, capsys):
+    """The folder itself stays mapped; only one file inside it disappears.
+    _prune_unmapped_output never looks at this case (the folder is still
+    expected) — the file-level prune added to _map_repo must catch it."""
+    repo, kb = repo_and_kb
+    (repo / "a.py").write_text('"""Doc A."""\ndef fn_a():\n    pass\n')
+    (repo / "b.py").write_text('"""Doc B."""\ndef fn_b():\n    pass\n')
+    kb_ops._map_repo(str(repo))
+    out_dir = kb / "mapped_folders" / repo.name
+    assert (out_dir / "a.py.md").is_file()
+    assert (out_dir / "b.py.md").is_file()
+    capsys.readouterr()
+
+    os.remove(repo / "a.py")
+    kb_ops._map_repo(str(repo))
+
+    assert not (out_dir / "a.py.md").exists()
+    assert (out_dir / "b.py.md").is_file()
+    assert "1 stale output file(s) removed" in capsys.readouterr().out
+
+
+def test_map_repo_prune_then_build_removes_the_pgvector_row_too(repo_and_kb, monkeypatch):
+    """Proves BOTH halves of acceptance #1: the file copy under
+    mapped_folders/ is pruned by _map_repo, and its pgvector row is pruned
+    by the very next _build — _build's existing stale-prune (kb_ops.py
+    _build: ``stale = set(existing.keys()) - seen_ids``) already deletes any
+    indexed doc whose file is gone; it only works once the file is actually
+    gone, which is the half this change adds."""
+    repo, kb = repo_and_kb
+    (repo / "a.py").write_text('"""Doc A."""\ndef fn_a():\n    pass\n')
+    (repo / "b.py").write_text('"""Doc B."""\ndef fn_b():\n    pass\n')
+    kb_ops._map_repo(str(repo))
+
+    a_doc_id = f"mapped_folders/{repo.name}/a.py.md"
+    b_doc_id = f"mapped_folders/{repo.name}/b.py.md"
+    fake = _FakeKB(existing={
+        a_doc_id: {"checksum": "stale-a"},
+        b_doc_id: {"checksum": "stale-b"},
+    })
+    monkeypatch.setattr(kb_ops, "_kb", fake)
+
+    os.remove(repo / "a.py")
+    kb_ops._map_repo(str(repo))
+    kb_ops._build(force=False)
+
+    assert a_doc_id in fake.deleted_ids
+    assert not any(doc_id == a_doc_id for doc_id, _content, _meta in fake.upserted)
+    assert any(doc_id == b_doc_id for doc_id, _content, _meta in fake.upserted)
+
+
+def test_map_repo_prune_skips_a_scan_that_matched_nothing(repo_and_kb, capsys):
+    """If the source walk sees zero eligible files at all while output
+    already exists, that reads as a failed/transient scan (e.g. a mount
+    that is momentarily empty), not as every file having been deleted in
+    the same instant — pruning must refuse rather than wipe the folder."""
+    repo, kb = repo_and_kb
+    (repo / "a.py").write_text('"""Doc A."""\ndef fn_a():\n    pass\n')
+    kb_ops._map_repo(str(repo))
+    out_dir = kb / "mapped_folders" / repo.name
+    assert (out_dir / "a.py.md").is_file()
+    capsys.readouterr()
+
+    os.remove(repo / "a.py")  # repo_dir still exists, but now has 0 eligible files
+    kb_ops._map_repo(str(repo))
+
+    assert (out_dir / "a.py.md").is_file(), "a scan that found nothing must not wipe real output"
+    assert "treating this as a failed or transient scan" in capsys.readouterr().out
+
+
+def test_map_repo_prune_leaves_human_edited_output_alone_when_source_is_gone(repo_and_kb):
+    """Same protection _map_repo already gives a live, unchanged source file
+    (never overwritten once a human has edited it) must also hold once the
+    source disappears — it is still not generated output we are free to
+    delete."""
+    repo, kb = repo_and_kb
+    (repo / "a.py").write_text('"""Doc A."""\ndef fn_a():\n    pass\n')
+    (repo / "b.py").write_text('"""Doc B."""\ndef fn_b():\n    pass\n')
+    kb_ops._map_repo(str(repo))
+    out_dir = kb / "mapped_folders" / repo.name
+    out_file = out_dir / "a.py.md"
+    edited_text = out_file.read_text().replace("edited: false", "edited: 2026-01-01 00:00:00")
+    out_file.write_text(edited_text)
+
+    os.remove(repo / "a.py")
+    kb_ops._map_repo(str(repo))
+
+    assert out_file.is_file(), "human-edited output must survive its source being deleted"
+
+
+# ---------------------------------------------------------------------------
 # _map_all / _prune_unmapped_output / _mapped_output_name
 # ---------------------------------------------------------------------------
 

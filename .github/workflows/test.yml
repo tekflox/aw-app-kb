@@ -4,14 +4,15 @@ name: Test
 # code-review-reusable.yml loop's `ci_check_name` input (see code-review.yml
 # in this same directory), plus a report-only `lint` job.
 #
-# This repo is `tier: inprocess` (aw-app.json) — it runs inside aw-workspace
-# core's own Python process and has no `requirements.txt`/`pyproject.toml` of
-# its own; its runtime deps are core's. The exact same gap already exists for
-# `release.yml` (tekflox/aw-marketplace's `app-release.yml`), which already
-# runs `python3 -m pytest tests/ -q` against this repo on every push to
-# main with nothing more than `pip install pytest jsonschema fastapi httpx
-# uvicorn` (+ requirements.txt/requirements-dev.txt IF present) — confirmed
-# green locally with this exact install set before this file was added.
+# This repo is `tier: container` (aw-app.json) and ships its own deps: a
+# root `requirements-dev.txt` that pulls in `kb_app/requirements-dev.txt`
+# (relative `-r`, resolved correctly by pip) -> `kb_app/requirements.txt`
+# (fastapi, psycopg, fastembed, etc). `python3 -m pytest tests/ -q` with
+# `pip install pytest jsonschema fastapi httpx uvicorn` + that
+# requirements-dev.txt chain is already proven: `release.yml`
+# (tekflox/aw-marketplace's `app-release.yml`) runs this exact recipe on
+# every push to main, and it was confirmed green locally (205 passed)
+# before this file was added.
 #
 # No `paths:` filter on `pull_request`, deliberately: the review/merge loop
 # requires this job's check to be PRESENT and passing before it will merge
@@ -55,7 +56,8 @@ jobs:
       - name: Run test suite
         run: python3 -m pytest tests/ -q
 
-  # Report-only: this repo has no `pyproject.toml` and has not been through
+  # Report-only: this repo's `pyproject.toml` has a `[tool.coverage.report]`
+  # section but no `[tool.ruff]`/`[tool.pylint]`, and has not been through
   # the triage pass docs/standards/pipeline-testing.md's Tier-B rollout
   # requires before a pylint error-class gate can block merges. Ruff with
   # its own defaults needs no repo config and gives a baseline without

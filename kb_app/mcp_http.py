@@ -114,6 +114,9 @@ TOOLS_SCHEMA = [
     {
         "name": "search_skills",
         "description": (
+            "[DEPRECATED] Duplicates aw__skills__search_skills (the aw-skills "
+            "connector) — use that tool instead; this one stays only for callers "
+            "not yet switched over and may be removed later. "
             "Search for AW skills by semantic similarity. Returns skills whose "
             "name/description match the query — use this to discover which skill "
             "to load for a given task before calling load_skill."
@@ -185,6 +188,9 @@ TOOLS_SCHEMA = [
     {
         "name": "load_skill",
         "description": (
+            "[DEPRECATED] Duplicates aw__skills__load_skill (the aw-skills "
+            "connector) — use that tool instead; this one stays only for callers "
+            "not yet switched over and may be removed later. "
             "Load the full content of a skill SKILL.md by skill name. Returns the "
             "complete skill instructions so you can follow them. Use search_skills "
             "first to discover the exact skill name."

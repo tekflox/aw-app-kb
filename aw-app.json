@@ -113,6 +113,10 @@
     "knowledge": {
       "path": "docs"
     },
+    "agents_md": {
+      "path": "docs/AGENTS-block.md",
+      "title": "Knowledge Base"
+    },
     "tasks": [
       {
         "name": "Sync: Knowledge-Base",

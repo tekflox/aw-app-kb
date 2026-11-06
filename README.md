@@ -45,3 +45,5 @@ full design) — the first real-repo rollout of the estate-wide standard.
   then hooks run on `git commit` (ruff, the same blocking pylint E-class check,
   manifest validation, whitespace/EOF hygiene). Bypassable with `--no-verify`;
   CI is the real gate, this is the fast local subset.
+
+<!-- fleet migration B4: follow-up no-op to prove the comment + workflow_run merge paths -->

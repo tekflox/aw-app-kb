@@ -9,16 +9,23 @@ name: Release
 #      docs/metadata-only push (README, docs/, tests/, aw-app.json itself)
 #      answers "no" and nothing below it runs.
 #   2. publish — only when (1) says yes: builds + pushes the image to
-#      GHCR (amd64-only; see publish.yml's header for the measured
-#      arm64/QEMU cost). Must SUCCEED before `release` is allowed to run.
+#      GHCR for both linux/amd64 and linux/arm64 (see publish.yml's header
+#      for the measured arm64/QEMU cost — ~11m vs ~80s amd64-only, paid
+#      only on a build-triggering push). Must SUCCEED before `release` is
+#      allowed to run.
 #   3. release — the existing reusable version-bump + marketplace-catalog
 #      sync. Deliberately LAST: it is what advertises a new version to
 #      `--update`, so by the time anything can see the bump, the matching
-#      image is already on GHCR — publishing first (not after, not
-#      parallel) is what actually closes the race, since the catalog PR
-#      this step opens can auto-merge within seconds of this job
+#      multi-arch image is already on GHCR — publishing first (not after,
+#      not parallel) is what actually closes the race, since the catalog
+#      PR this step opens can auto-merge within seconds of this job
 #      finishing. Running the bump before/alongside the build just moves
-#      the same bug to a shorter window instead of closing it.
+#      the same bug to a shorter window instead of closing it. `publish`
+#      below must keep `include_arm64: true` for this to hold — an
+#      amd64-only image still makes `publish` succeed, so `release` would
+#      advertise a version whose arm64 image doesn't exist, recreating the
+#      same install failure through this gate instead of around it (the
+#      regression this card reverts, commit 527b3c6, 2026-10-11).
 #
 # If `publish` fails, `release` is skipped outright (its `if:` below) — no
 # version bump, no catalog PR, nothing advertised. A bumped version with
@@ -81,7 +88,7 @@ jobs:
       packages: write
     uses: ./.github/workflows/publish.yml
     with:
-      include_arm64: false
+      include_arm64: true
     secrets: inherit
 
   release:

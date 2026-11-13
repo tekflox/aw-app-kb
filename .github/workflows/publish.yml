@@ -2,7 +2,8 @@ name: Publish image
 
 # Builds the single aw-app-kb image (Postgres+pgvector base + FastAPI
 # backend + built UI, see Dockerfile) and pushes it to
-# ghcr.io/<owner>/aw-app-kb. Two ways in:
+# ghcr.io/<owner>/aw-app-kb for both linux/amd64 and linux/arm64. Two ways
+# in:
 #
 #   - workflow_dispatch: manual run, amd64 + linux/arm64 by default.
 #   - workflow_call: release.yml's `publish` job calls this automatically,
@@ -11,11 +12,16 @@ name: Publish image
 #     ui/, entrypoint.sh, Dockerfile, read straight off this Dockerfile's
 #     own COPY lines (see release.yml's `changed-paths` job, keep the two
 #     lists in sync). A docs/metadata-only push never reaches this job, so
-#     it never pays for a build. Forced to amd64-only on that automatic
-#     path — QEMU arm64 emulation measured ~8x slower on this same
-#     runner/image family (aw-mcp-gateway run 36450565287: 11m with arm64
-#     vs. its own ~80s amd64-only baseline) — manual runs keep the
-#     amd64+arm64 default below.
+#     it never pays for a build. The automatic path also builds arm64 —
+#     QEMU emulation measured ~8x slower on this same runner/image family
+#     (aw-mcp-gateway run 36450565287: 11m with arm64 vs. its own ~80s
+#     amd64-only baseline), but that cost is accepted: an amd64-only
+#     automatic path is what silently broke arm64 installs for ~56 days
+#     (527b3c6, 2026-10-11) before anyone noticed, and the alternative of
+#     "arm64 only on a manual workflow_dispatch" was tried first and
+#     rejected — across ~12 releases nobody ever dispatched it by hand.
+#     `-f include_arm64=false` below is an escape hatch for a deliberate
+#     amd64-only hotfix, not the steady state for either trigger.
 #
 #   gh workflow run publish.yml                          # amd64 + linux/arm64 (default)
 #   gh workflow run publish.yml -f include_arm64=false   # amd64 only (skip QEMU arm64)
@@ -31,7 +37,7 @@ on:
       include_arm64:
         description: 'Also build linux/arm64 (QEMU emulation; slower)'
         type: boolean
-        default: false
+        default: true
 
 concurrency:
   group: publish-aw-app-kb-${{ github.ref }}
